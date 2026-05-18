@@ -1,0 +1,355 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// 1. موديل العملاء - تم ضبط الحقول والارتباط بالمعاملات
+model Client {
+  id           Int           @id @default(autoincrement())
+  name         String
+  email        String?       @unique
+  country      String?
+  company      String?
+  phone        String?
+  telephone    String?
+  fax          String?
+  contact      String?
+  address      String?
+  vat          String?
+  agentName    String?
+  dhl          String?
+  balance      Float         @default(0)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  jobs         Job[]
+  transactions Transaction[]
+}
+
+// 2. موديل الموردين - تم إضافة حقل product
+model Supplier {
+  id        Int      @id @default(autoincrement())
+  name      String
+  country   String
+  address   String?
+  contact   String?
+  email     String?  @unique
+  phone     String?
+  vat       String?
+  product   String? 
+  supplierIds       String[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  transactions Transaction[]
+
+  products Product[]
+  jobs     Job[]
+}
+
+// 3. موديل المعاملات المالية
+model Transaction {
+  id            Int      @id @default(autoincrement())
+  type          String   // incoming, outgoing, petty_cash, raw_material, discount
+  amount        Float
+  currency      String   @default("USD")
+  date          DateTime @default(now())
+  description   String   @db.Text
+  bank          String?
+  blNumber      String?
+  invoiceNumber String?
+  weightInTons  Float?
+  packages      Int?
+
+  // معرفات العلاقات الرقمية الصريحة لمنع كراشات التحويل
+  clientId      Int?
+  client        Client?  @relation(fields: [clientId], references: [id], onDelete: SetNull)
+
+  supplierId    Int?     // تم إضافته لدعم حسابات الموردين في الـ Ledgers بأمان
+  supplier      Supplier? @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+
+  jobId         Int?
+  job           Job?     @relation(fields: [jobId], references: [id], onDelete: SetNull)
+
+  // حقول حرة لدعم النظام القديم للفرونت إند بدون قيود صلبة
+  relatedId     String?
+  relatedType   String?
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([clientId])
+  @@index([supplierId])
+  @@index([jobId])
+  @@index([type])
+  @@map("transactions")
+}
+
+// 4. موديل المنتجات
+model Product {
+  id                Int     @id @default(autoincrement())
+  name              String
+  category          String?
+  currency          String  @default("USD")
+  price             Float?  @default(0)
+  numberOfSuppliers Int     @default(0)
+  supplierIds       Int[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  supplierId Int?
+  supplier   Supplier? @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+
+  containerProducts ContainerProduct[]
+  jobProducts       JobProduct[]
+
+  @@index([supplierId])
+  @@index([category])
+}
+
+// 5. موديل العمليات (Jobs) 
+model Job {
+  id                     Int      @id @default(autoincrement())
+  jobNumber              String   @unique
+  title                  String
+  operationType          String   @default("export")
+  status                 String   @default("active")
+  currency               String   @default("USD")
+  notes                  String?  @db.Text
+  discountPercentage     Float    @default(0)
+  rawMaterialWeight      Float    @default(0)
+  rawMaterialPricePerTon Float    @default(0)
+  pettyCash              Float    @default(0)
+  createdAt              DateTime @default(now())
+
+  shippingRecords ShippingAgentRecord[]
+  attachments     Json?
+  packingLists    PackingList[]
+  transactions    Transaction[]
+  shipmentOperations     ShipmentOperation[]
+
+  clientId    Int?
+  supplierId Int?
+
+  client   Client?   @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  supplier Supplier? @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+
+  products JobProduct[]
+
+  @@index([clientId])
+  @@index([supplierId])
+  @@index([jobNumber])
+}
+
+// 6. موديلات مساعدة للعمليات (JobProduct, Container, إلخ)
+model JobProduct {
+  id        Int     @id @default(autoincrement())
+  jobId     Int
+  productId Int
+  quantity  Float   @default(1)
+  unitPrice Float
+  currency  String  @default("USD")
+  variety   String?
+
+  job     Job     @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([jobId])
+  @@index([productId])
+}
+
+model Container {
+  id              Int       @id @default(autoincrement())
+  containerNumber String    @unique
+  sourcePort      String?
+  destinationPort String?
+  shippingDate    DateTime?
+  arrivalDate     DateTime?
+  status          String    @default("loading")
+  createdAt       DateTime  @default(now())
+
+  products    ContainerProduct[]
+  attachments Attachment[]
+
+  @@index([containerNumber])
+}
+
+model ContainerProduct {
+  id          Int     @id @default(autoincrement())
+  containerId Int
+  productId   Int
+  quantity    Float   @default(0)
+  unit        String  @default("KG")
+  packages    Int?    @default(0)
+  netWeight   Float?  @default(0)
+  grossWeight Float?  @default(0)
+  packageType String?
+
+  container Container @relation(fields: [containerId], references: [id], onDelete: Cascade)
+  product   Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([containerId])
+  @@index([productId])
+}
+
+model Attachment {
+  id          Int       @id @default(autoincrement())
+  containerId Int
+  url         String
+  description String?
+  createdAt   DateTime  @default(now())
+  container   Container @relation(fields: [containerId], references: [id], onDelete: Cascade)
+
+  @@index([containerId])
+}
+
+model ShippingAgent {
+  id              Int      @id @default(autoincrement())
+  name            String
+  company         String?
+  address         String?
+  telephone       String?
+  personalNumber  String?
+  email           String?  @unique
+  attachmentUrl   String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  records ShippingAgentRecord[]
+}
+
+model ShippingAgentRecord {
+  id              Int      @id @default(autoincrement())
+  date            DateTime @default(now())
+  blNumber        String?
+  country         String?
+  containerCount Int      @default(0)
+  costEgp         Float    @default(0)
+  costEgpNote     String?
+  costEuro        Float    @default(0)
+  costEuroNote    String?
+  costUsd         Float    @default(0)
+  costUsdNote     String?
+  pdfUrl          String?
+  createdAt       DateTime @default(now())
+
+  agentId Int
+  agent   ShippingAgent @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  jobId Int?
+  job   Job? @relation(fields: [jobId], references: [id], onDelete: SetNull)
+
+  @@index([agentId])
+  @@index([jobId])
+}
+
+model PackingList {
+  id                 Int       @id @default(autoincrement())
+  date               DateTime
+  blNumber           String?
+  clientName         String
+  invoiceNumber      String?
+  customRelease      String?
+  note               String?   @db.Text
+  shippingAgent      String?
+  pol                String?
+  pod                String?
+  finalDestination   String?
+  shippingDate       DateTime?
+  dhlNumber          String?
+  numberOfContainers Int       @default(0)
+  numberOfProducts   Int       @default(0)
+  containerNumbers   Json?     @default("[]")
+  products           Json?     @default("[]")
+  attachments        Json?     @default("[]")
+
+  jobId Int?
+  job   Job? @relation(fields: [jobId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([jobId])
+  @@map("packing_lists")
+}
+
+model Employee {
+  id        Int      @id @default(autoincrement())
+  name      String
+  jobTitle  String?
+  phone     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Commission {
+  id                    Int      @id @default(autoincrement())
+  date                  DateTime @default(now())
+  clientName            String
+  trader                String?  @default("")
+  product               String?  @default("")
+  qualityRepresentative String?  @default("")
+  numberOfContainers    Int      @default(0)
+  totalQuantityTon      Float    @default(0)
+  commissionPerTon      Float    @default(0)
+  currency              String   @default("USD")
+  attachments           Json?    @default("[]")
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@map("commissions")
+}
+
+model ShipmentOperation {
+  id                    Int      @id @default(autoincrement())
+  operationDate         DateTime
+  loadingDate           DateTime
+  jobDate               DateTime?
+  jobId                 Int?  
+  job                   Job?     @relation(fields: [jobId], references: [id], onDelete: SetNull) // العلاقة مع جدول الـ Job
+  clientName            String
+  product               String?
+  quantity              String?
+  numberOfContainers    String?
+  containerNumber       String?
+  responsiblePerson     String?
+  qualityRepresentative String?
+  notes                 String?  @db.Text
+  attachments           Json?    @default("[]")
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@map("shipment_operations")
+}
+
+model User {
+  id        Int      @id @default(autoincrement())
+  username  String   @unique
+  password  String
+  role      String   @default("admin")
+  createdAt DateTime @default(now())
+}
+
+// تم تصحيح القيد لإنشاء حسابات متعددة لنفس البنك بعملات مختلفة ✅
+model BankBalance {
+  id       Int    @id @default(autoincrement())
+  bankName String 
+  currency String @default("USD")
+  amount   Float  @default(0) 
+  updatedAt DateTime @updatedAt
+
+  @@unique([bankName, currency]) // الحماية المركبة الفريدة
+}
+
+// تم توحيد نوع حقل الـ jobId ليتوافق رقمياً مع جدول العمليات ✅
+model ArchiveFile {
+  id         String   @id @default(uuid())
+  name       String
+  type       String   
+  jobId      Int?     
+  url        String   @db.Text 
+  uploadedAt DateTime @default(now())
+}
