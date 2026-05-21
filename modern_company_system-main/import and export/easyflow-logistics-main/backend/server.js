@@ -52,9 +52,10 @@ const upload = multer({
     limits: { fileSize: 10 * 1024 * 1024 } 
 });
 
-// 2. Middlewares الأساسية (CORS إعدادات متوافقة مع Render و Vercel)
+
 app.use(cors({
-    origin: '*', 
+    origin: true, 
+    credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept']
 }));
@@ -164,10 +165,12 @@ app.use((req, res, next) => {
     next();
 });
 app.use((req, res, next) => {
+    // حل مشكلة الـ CORS والـ Rewrites للـ Vercel Proxy بشكل ديناميكي
     if (req.body && typeof req.body === 'object') {
         
-        // 1. تأمين حقول العميل الرقمية لتتوافق مع double precision في نيون
-        if (req.url.includes('/api/clients') && req.method === 'POST') {
+        // تأمين حقول العميل الرقمية والنصية لتتوافق مع double precision في نيون
+        // شيلنا شرط الـ req.method عشان يشتغل مع الـ Proxy والـ Rewrites بشكل مستقر
+        if (req.url.includes('/clients')) {
             req.body.operationsCount = req.body.operationsCount !== undefined && req.body.operationsCount !== null ? Number(req.body.operationsCount) : 0;
             req.body.operationsValue = req.body.operationsValue !== undefined && req.body.operationsValue !== null ? Number(req.body.operationsValue) : 0;
             req.body.remainingBalance = req.body.remainingBalance !== undefined && req.body.remainingBalance !== null ? Number(req.body.remainingBalance) : 0;
@@ -179,9 +182,9 @@ app.use((req, res, next) => {
             }
 
             // تعويض الحقول النصية الفارغة لتفادي قيود الـ NOT NULL في الـ Database
-            if (!req.body.country || req.body.country.trim() === "") req.body.country = req.body.address || "—";
-            if (!req.body.contact || req.body.contact.trim() === "") req.body.contact = req.body.agentName || "—";
-            if (!req.body.email || req.body.email.trim() === "") req.body.email = "—";
+            if (!req.body.country || String(req.body.country).trim() === "") req.body.country = req.body.address || "—";
+            if (!req.body.contact || String(req.body.contact).trim() === "") req.body.contact = req.body.agentName || "—";
+            if (!req.body.email || String(req.body.email).trim() === "") req.body.email = "—";
         }
     }
     next();
