@@ -5,7 +5,7 @@ import { toast } from "sonner";
 // CONFIG
 // ============================================================================
 
-const BACKEND_URL = "https://modern-system-flame.vercel.app/api";
+const BACKEND_URL = "/api";
 
 const api: AxiosInstance = axios.create({
   baseURL: BACKEND_URL,
