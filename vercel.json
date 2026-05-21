@@ -4,7 +4,7 @@
     {
       "src": "modern_company_system-main/import and export/easyflow-logistics-main/backend/index.js",
       "use": "@vercel/node"
-    } 
+    }
   ],
   "routes": [
     {
