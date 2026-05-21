@@ -35,8 +35,11 @@ import bankRoutes from './routes/bankRoutes.js';
 
 const app = express();
 
-// 1. إعداد مجلد الرفع بمسار مطلق مستقر للـ Cloud
-const uploadDir = path.join(__dirname, 'uploads');
+// 1. إعداد مجلد الرفع بمسار متوافق مع الـ Serverless والـ Local معاً
+import os from 'os';
+const isProduction = process.env.NODE_ENV === 'production';
+const uploadDir = isProduction ? path.join(os.tmpdir(), 'uploads') : path.join(__dirname, 'uploads');
+
 if (!fs.existsSync(uploadDir)) {
     fs.mkdirSync(uploadDir, { recursive: true });
 }
@@ -232,16 +235,13 @@ app.use((err, req, res, next) => {
     });
 });
 
-// 5. تشغيل السيرفر (تعديل الـ PORT الإجباري للـ Cloud)
 const PORT = process.env.PORT || 8080;
-app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server running perfectly on port ${PORT} 🚀`);
-});
 
-export default app;
+// بنشغل السيرفر محلياً فقط لو مش في الـ Production عشان Vercel هو اللي بيدير التشغيل تلقائياً
 if (process.env.NODE_ENV !== 'production') {
-    const PORT = process.env.PORT || 8080;
     app.listen(PORT, '0.0.0.0', () => {
         console.log(`Server running perfectly on port ${PORT} 🚀`);
     });
 }
+
+export default app;
