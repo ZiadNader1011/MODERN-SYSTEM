@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { useTranslation } from 'react-i18next';
+import { useTranslation } from '../../node_modules/react-i18next';
 import { getJobs, getSuppliers, getClients, getProducts, getContainers, getTransactions, formatCurrency, formatDate } from '@/data/store';
 import { AccountStatement } from '@/components/AccountStatement';
 import { Button } from '@/components/ui/button';

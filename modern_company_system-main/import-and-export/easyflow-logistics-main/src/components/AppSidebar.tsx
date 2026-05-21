@@ -5,7 +5,7 @@ import {
 } from 'lucide-react';
 import { NavLink } from '@/components/NavLink';
 import { useLocation } from 'react-router-dom';
-import { useTranslation } from 'react-i18next';
+import { useTranslation } from '../../node_modules/react-i18next';
 import { LanguageSwitcher } from './LanguageSwitcher';
 import {
   Sidebar,

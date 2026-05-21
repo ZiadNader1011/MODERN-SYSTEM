@@ -1,5 +1,5 @@
 import { useState, useMemo, useRef } from 'react';
-import { useTranslation } from 'react-i18next';
+import { useTranslation } from '../../node_modules/react-i18next';
 import { getTransactions, saveTransactions, formatDate, formatCurrency, EGYPTIAN_BANKS, Transaction, getJobs, getSuppliers, getClients, generateId, getBankBalances, saveBankBalances, BankBalances } from '@/data/store';
 import { PageHeader } from '@/components/PageHeader';
 import { Building2, Plus, Receipt, Pencil, Trash2, Paperclip, Printer } from 'lucide-react';

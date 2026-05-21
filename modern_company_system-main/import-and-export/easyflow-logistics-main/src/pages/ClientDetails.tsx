@@ -1,6 +1,6 @@
 import { useMemo, useState, useEffect, useRef } from 'react';
 import { useParams as useRouterParams, useNavigate as useRouterNavigate } from 'react-router-dom';
-import { useTranslation } from 'react-i18next';
+import { useTranslation } from '../../node_modules/react-i18next';
 import { toast } from 'sonner';
 import {
   getClients, getJobs, getTransactions, getContainers, getProducts,

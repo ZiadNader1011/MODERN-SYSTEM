@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useTranslation } from 'react-i18next';
+import { useTranslation } from '../../node_modules/react-i18next';
 import { Search, MapPin, Briefcase, Calculator } from 'lucide-react';
 import { getJobs, getContainers, getSuppliers, getClients, formatDate, getTransactions, getPackingLists } from '@/data/store';
 import {
