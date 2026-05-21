@@ -2,18 +2,18 @@
   "version": 2,
   "builds": [
     {
-      "src": "modern_company_system-main/import and export/easyflow-logistics-main/backend/index.js",
+      "src": "modern_company_system-main/import-and-export/easyflow-logistics-main/backend/index.js",
       "use": "@vercel/node"
     }
   ],
   "routes": [
     {
       "src": "/api/(.*)",
-      "dest": "modern_company_system-main/import and export/easyflow-logistics-main/backend/index.js"
+      "dest": "modern_company_system-main/import-and-export/easyflow-logistics-main/backend/index.js"
     },
     {
       "src": "/(.*)",
-      "dest": "modern_company_system-main/import and export/easyflow-logistics-main/backend/index.js"
+      "dest": "modern_company_system-main/import-and-export/easyflow-logistics-main/backend/index.js"
     }
   ]
 }
