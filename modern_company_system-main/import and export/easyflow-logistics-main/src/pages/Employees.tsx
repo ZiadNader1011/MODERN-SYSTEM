@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { PageHeader } from '@/components/PageHeader';
 import { DeleteConfirmDialog } from '@/components/DeleteConfirmDialog';
@@ -12,7 +12,6 @@ import { toast } from 'sonner';
 
 export default function Employees() {
   const { t } = useTranslation();
-  const [employees, setEmployees] = useState<Employee[]>(getEmployees);
   const transactions = useMemo(() => getTransactions(), []);
 
   const [editOpen, setEditOpen] = useState(false);
@@ -20,6 +19,17 @@ export default function Employees() {
   const [editing, setEditing] = useState<Employee | null>(null);
   const [deleting, setDeleting] = useState<Employee | null>(null);
   const [form, setForm] = useState({ name: '', phone: '', jobTitle: '' });
+
+
+  const [employees, setEmployees] = useState<Employee[]>([]);
+
+useEffect(() => {
+  setEmployees(getEmployees());
+  const timer = setTimeout(() => {
+    setEmployees(getEmployees());
+  }, 600);
+  return () => clearTimeout(timer);
+}, []);
 
   const openNew = () => {
     setEditing(null);

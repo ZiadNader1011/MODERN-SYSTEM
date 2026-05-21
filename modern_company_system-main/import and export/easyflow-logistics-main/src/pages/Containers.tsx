@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useRef } from 'react';
+import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { PageHeader } from '@/components/PageHeader';
 import { DeleteConfirmDialog } from '@/components/DeleteConfirmDialog';
@@ -34,7 +34,6 @@ const statusIcons: Record<string, string> = {
 
 export default function Containers() {
   const { t } = useTranslation();
-  const [containers, setContainers] = useState<Container[]>(getContainers);
   const products = useMemo(() => getProducts(), []);
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -42,6 +41,17 @@ export default function Containers() {
   const [deleting, setDeleting] = useState<Container | null>(null);
   const [viewingFile, setViewingFile] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+
+  const [containers, setContainers] = useState<Container[]>([]);
+
+useEffect(() => {
+  setContainers(getContainers());
+  const timer = setTimeout(() => {
+    setContainers(getContainers());
+  }, 600);
+  return () => clearTimeout(timer);
+}, []);
 
   const emptyForm = {
     containerNumber: '', sourcePort: '', destinationPort: '',

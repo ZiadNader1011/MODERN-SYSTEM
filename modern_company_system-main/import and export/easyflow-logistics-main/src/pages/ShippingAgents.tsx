@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import { PageHeader } from '@/components/PageHeader';
@@ -16,9 +16,18 @@ import { toast } from 'sonner';
 export default function ShippingAgents() {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const [agents, setAgents] = useState<ShippingAgent[]>(getShippingAgents);
   const records = useMemo(() => getShippingAgentRecords(), []);
   const transactions = useMemo(() => getTransactions(), []);
+  const [agents, setAgents] = useState<ShippingAgent[]>([]);
+
+useEffect(() => {
+  setAgents(getShippingAgents());
+  const timer = setTimeout(() => {
+    setAgents(getShippingAgents());
+  }, 600);
+  return () => clearTimeout(timer);
+}, []);
+  
 
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);

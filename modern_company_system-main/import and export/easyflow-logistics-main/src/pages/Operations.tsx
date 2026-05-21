@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { PageHeader } from '@/components/PageHeader';
 import { DeleteConfirmDialog } from '@/components/DeleteConfirmDialog';
@@ -17,10 +17,21 @@ import { toast } from 'sonner';
 
 export default function Operations() {
   const { t } = useTranslation();
-  const [operations, setOperations] = useState<ShipmentOperation[]>(getShipmentOperations);
+
   const jobs = getJobs();
   const clients = getClients();
   const containers = getContainers();
+
+
+  const [operations, setOperations] = useState<ShipmentOperation[]>([]);
+
+useEffect(() => {
+  setOperations(getShipmentOperations());
+  const timer = setTimeout(() => {
+    setOperations(getShipmentOperations());
+  }, 600);
+  return () => clearTimeout(timer);
+}, []);
 
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);

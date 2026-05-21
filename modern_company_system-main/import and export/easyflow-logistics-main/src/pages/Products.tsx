@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { PageHeader } from '@/components/PageHeader';
 import { DeleteConfirmDialog } from '@/components/DeleteConfirmDialog';
@@ -13,7 +13,6 @@ import { toast } from 'sonner';
 
 export default function Products() {
   const { t } = useTranslation();
-  const [products, setProducts] = useState<Product[]>(getProducts);
   const suppliers = getSuppliers();
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -21,6 +20,21 @@ export default function Products() {
   const [deleting, setDeleting] = useState<Product | null>(null);
   const emptyForm = { name: '', category: '', supplierId: '', numberOfSuppliers: '' as string | number, supplierIds: [] as string[] };
   const [form, setForm] = useState(emptyForm);
+
+  // 1. تأكدي من استدعاء getProducts من الـ store
+const [products, setProducts] = useState<Product[]>([]);
+
+useEffect(() => {
+  setProducts(getProducts());
+  const interval = setInterval(() => {
+    const latest = getProducts();
+    if (latest.length > 0) {
+      setProducts(latest);
+      clearInterval(interval);
+    }
+  }, 1000);
+  return () => clearInterval(interval);
+}, []);
 
   const openNew = () => {
     setEditing(null);

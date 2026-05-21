@@ -1,4 +1,4 @@
-import { useState, useRef, useMemo } from 'react';
+import { useState, useRef, useMemo, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { PageHeader } from '@/components/PageHeader';
 import { DeleteConfirmDialog } from '@/components/DeleteConfirmDialog';
@@ -17,7 +17,6 @@ import { toast } from 'sonner';
 
 export default function PackingLists() {
   const { t } = useTranslation();
-  const [packingLists, setPackingLists] = useState<StandalonePackingList[]>(getPackingLists);
 
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -26,6 +25,16 @@ export default function PackingLists() {
   const [printing, setPrinting] = useState<StandalonePackingList | null>(null);
   const [printOpen, setPrintOpen] = useState(false);
   
+
+  const [packingLists, setPackingLists] = useState<StandalonePackingList[]>([]);
+
+useEffect(() => {
+  setPackingLists(getPackingLists());
+  const timer = setTimeout(() => {
+    setPackingLists(getPackingLists());
+  }, 600);
+  return () => clearTimeout(timer);
+}, []);
   const [viewingFile, setViewingFile] = useState<string | null>(null);
   const containersList = useMemo(() => getContainers(), []);
 

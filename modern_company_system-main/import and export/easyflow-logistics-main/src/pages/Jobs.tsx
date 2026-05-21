@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { PageHeader } from '@/components/PageHeader';
@@ -36,7 +36,6 @@ const statusColors: Record<string, string> = {
 export default function Jobs() {
   const navigate = useNavigate();
   const { t } = useTranslation();
-  const [jobs, setJobs] = useState<Job[]>(getJobs);
   const transactions = useMemo(() => getTransactions(), []);
   const suppliers = useMemo(() => getSuppliers(), []);
   const clients = useMemo(() => getClients(), []);
@@ -45,6 +44,20 @@ export default function Jobs() {
   const shippingAgents = useMemo(() => getShippingAgents(), []);
   const shipmentOperations = useMemo(() => getShipmentOperations(), []);
   const shippingAgentRecords = useMemo(() => getShippingAgentRecords(), []);
+  // 1. تأكدي من استدعاء getJobs من الـ store
+const [jobs, setJobs] = useState<Job[]>([]);
+
+useEffect(() => {
+  setJobs(getJobs());
+  const interval = setInterval(() => {
+    const latest = getJobs();
+    if (latest.length > 0) {
+      setJobs(latest);
+      clearInterval(interval);
+    }
+  }, 1000);
+  return () => clearInterval(interval);
+}, []);
 
   const [activeTab, setActiveTab] = useState<OperationType>('export');
 

@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import { PageHeader } from '@/components/PageHeader';
@@ -16,10 +16,23 @@ import { toast } from 'sonner';
 export default function Suppliers() {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const [suppliers, setSuppliers] = useState<Supplier[]>(getSuppliers);
   const products = useMemo(() => getProducts(), []);
   const jobs = useMemo(() => getJobs(), []);
   const transactions = useMemo(() => getTransactions(), []);
+  // 1. تأكدي من استدعاء getSuppliers من الـ store
+const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+
+useEffect(() => {
+  setSuppliers(getSuppliers());
+  const interval = setInterval(() => {
+    const latest = getSuppliers();
+    if (latest.length > 0) {
+      setSuppliers(latest);
+      clearInterval(interval);
+    }
+  }, 1000);
+  return () => clearInterval(interval);
+}, []);
 
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);

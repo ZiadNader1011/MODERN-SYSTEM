@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { PageHeader } from '@/components/PageHeader';
 import { StatCard } from '@/components/StatCard';
@@ -22,13 +22,44 @@ import { toast } from 'sonner';
 
 export default function Financials() {
   const { t } = useTranslation();
-  const [transactions, setTransactions] = useState<Transaction[]>(getTransactions);
-  const suppliers = useMemo(() => getSuppliers(), []);
-  const clients = useMemo(() => getClients(), []);
-  const jobs = useMemo(() => getJobs(), []);
-  const containers = useMemo(() => getContainers(), []);
-  const shippingAgents = useMemo(() => getShippingAgents(), []);
-  const employees = useMemo(() => getEmployees(), []);
+  
+  // States لجميع البيانات القادمة من المتجر
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [suppliers, setSuppliers] = useState<any[]>([]);
+  const [clients, setClients] = useState<any[]>([]);
+  const [jobs, setJobs] = useState<any[]>([]);
+  const [containers, setContainers] = useState<any[]>([]);
+  const [shippingAgents, setShippingAgents] = useState<any[]>([]);
+  const [employees, setEmployees] = useState<any[]>([]);
+
+  // ============================================================================
+  // 🔥 المزامنة الفورية والدورية لكل الجداول لضمان عدم اختفائها 🔥
+  // ============================================================================
+  useEffect(() => {
+    const loadAllData = () => {
+      setTransactions(getTransactions());
+      setSuppliers(getSuppliers());
+      setClients(getClients());
+      setJobs(getJobs());
+      setContainers(getContainers());
+      setShippingAgents(getShippingAgents());
+      setEmployees(getEmployees());
+    };
+
+    loadAllData(); // تحميل فوري
+
+    // تحديثات متتالية سريعة للتأكد من استقرار البيانات بعد اتصال الباك إند
+    const t1 = setTimeout(loadAllData, 300);
+    const t2 = setTimeout(loadAllData, 800);
+    const t3 = setTimeout(loadAllData, 1500);
+
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+      clearTimeout(t3);
+    };
+  }, []);
+  // ============================================================================
 
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -57,6 +88,7 @@ export default function Financials() {
     return transactions;
   }, [transactions]);
 
+  // تعديل دالة الحساب لتعتمد مباشرة على visibleTransactions الحالية في الـ State
   const sumByCurrency = (type: string) => {
     const subset = visibleTransactions.filter(t => t.type === type);
     const obj = subset.reduce((acc, t) => { acc[t.currency] = (acc[t.currency] || 0) + t.amount; return acc; }, {} as Record<string, number>);
@@ -137,8 +169,8 @@ export default function Financials() {
     setDeleting(null);
   }, [deleting, transactions]);
 
-  // Build a list of all linkable entities
-  const linkableEntities = [
+  // تحديث بناء قائمة الكيانات لتعمل بشكل ديناميكي صحيح مع الـ States الجديدة
+  const linkableEntities = useMemo(() => [
     { label: '--- Jobs ---', isLabel: true, value: 'label-jobs' },
     ...jobs.map(j => ({ label: `Job: ${j.title}`, value: j.id })),
     { label: '--- Suppliers ---', isLabel: true, value: 'label-suppliers' },
@@ -149,7 +181,7 @@ export default function Financials() {
     ...shippingAgents.map(a => ({ label: `Agent: ${a.name}`, value: a.id })),
     { label: '--- Employees ---', isLabel: true, value: 'label-employees' },
     ...employees.map(e => ({ label: `Employee: ${e.name}`, value: e.id }))
-  ];
+  ], [jobs, suppliers, clients, shippingAgents, employees]);
 
   const getRelatedEntityName = (id?: string) => {
     if (!id) return null;
@@ -162,7 +194,6 @@ export default function Financials() {
     const a = shippingAgents.find(x => x.id === id);
     if (a) return `Agent: ${a.name}`;
     const e = employees.find(x => x.id === id);
-    if (e) return `Employee: ${e.name}`;
     if (e) return `Employee: ${e.name}`;
     return null;
   };
@@ -178,86 +209,85 @@ export default function Financials() {
     }
   }, [filterCategory, jobs, clients, suppliers, shippingAgents, employees]);
 
-  // When category changes, reset entity selection
   const handleCategoryChange = (val: string) => {
     setFilterCategory(val);
     setFilterEntityId('all');
   };
 
-  const filteredTransactions = visibleTransactions
-    .filter(t => {
-      // 1. Entity Filter Logic
-      if (filterCategory !== 'all' && filterEntityId !== 'all') {
-        const j = jobs.find(x => x.id === t.relatedId);
-        
-        if (filterCategory === 'jobs') {
-          if (t.relatedId !== filterEntityId) return false;
-        } else if (filterCategory === 'clients') {
-          const directMatch = t.relatedId === filterEntityId;
-          const jobMatch = j && j.clientId === filterEntityId;
-          if (!directMatch && !jobMatch) return false;
-        } else if (filterCategory === 'suppliers') {
-          const directMatch = t.relatedId === filterEntityId;
-          const jobMatch = j && j.supplierId === filterEntityId;
-          if (!directMatch && !jobMatch) return false;
-        } else if (filterCategory === 'agents') {
-          if (t.relatedId !== filterEntityId) return false;
-        } else if (filterCategory === 'employees') {
-          if (t.relatedId !== filterEntityId) return false;
+  const filteredTransactions = useMemo(() => {
+    return visibleTransactions
+      .filter(t => {
+        if (filterCategory !== 'all' && filterEntityId !== 'all') {
+          const j = jobs.find(x => x.id === t.relatedId);
+          
+          if (filterCategory === 'jobs') {
+            if (t.relatedId !== filterEntityId) return false;
+          } else if (filterCategory === 'clients') {
+            const directMatch = t.relatedId === filterEntityId;
+            const jobMatch = j && j.clientId === filterEntityId;
+            if (!directMatch && !jobMatch) return false;
+          } else if (filterCategory === 'suppliers') {
+            const directMatch = t.relatedId === filterEntityId;
+            const jobMatch = j && j.supplierId === filterEntityId;
+            if (!directMatch && !jobMatch) return false;
+          } else if (filterCategory === 'agents') {
+            if (t.relatedId !== filterEntityId) return false;
+          } else if (filterCategory === 'employees') {
+            if (t.relatedId !== filterEntityId) return false;
+          }
         }
-      }
 
-      // 2. Search Term Logic
-      if (!searchTerm) return true;
-      const q = searchTerm.toLowerCase();
-      const related = getRelatedEntityName(t.relatedId) || '';
-      const formattedDate = formatDate(t.date) || '';
-      
-      const normalizedDate = formattedDate.replace(/[\-\.\s]+/g, '/');
-      const normalizedQuery = q.replace(/[\-\.\s]+/g, '/');
-      const dateStringMatch = normalizedQuery.length > 0 && normalizedDate.includes(normalizedQuery);
-      
-      const rawDateStr = formattedDate.replace(/[^0-9]/g, '');
-      const rawQueryStr = q.replace(/[^0-9]/g, '');
-      const numericMatch = rawQueryStr.length > 0 && (rawDateStr.includes(rawQueryStr) || t.date.replace(/[^0-9]/g, '').includes(rawQueryStr));
+        if (!searchTerm) return true;
+        const q = searchTerm.toLowerCase();
+        const related = getRelatedEntityName(t.relatedId) || '';
+        const formattedDate = formatDate(t.date) || '';
+        
+        const normalizedDate = formattedDate.replace(/[\-\.\s]+/g, '/');
+        const normalizedQuery = q.replace(/[\-\.\s]+/g, '/');
+        const dateStringMatch = normalizedQuery.length > 0 && normalizedDate.includes(normalizedQuery);
+        
+        const rawDateStr = formattedDate.replace(/[^0-9]/g, '');
+        const rawQueryStr = q.replace(/[^0-9]/g, '');
+        const numericMatch = rawQueryStr.length > 0 && (rawDateStr.includes(rawQueryStr) || t.date.replace(/[^0-9]/g, '').includes(rawQueryStr));
 
-      const directInvoiceSearch = t.invoiceNumber ? t.invoiceNumber.toLowerCase() : '';
-      const j = jobs.find(x => x.id === t.relatedId);
-      const invoiceSearch = j && j.invoiceNumber ? j.invoiceNumber.toLowerCase() : '';
-      const blSearch = j && j.blNumber ? j.blNumber.toLowerCase() : '';
-      const directBlSearch = t.blNumber ? t.blNumber.toLowerCase() : '';
-      const c = j && j.containerId ? containers.find(cont => cont.id === j.containerId) : null;
-      const containerSearch = c ? c.containerNumber.toLowerCase() : '';
-      
-      const supplierSearch = j && j.supplierId ? suppliers.find(x => x.id === j.supplierId)?.name.toLowerCase() || '' : '';
-      const clientSearch = j && j.clientId ? clients.find(x => x.id === j.clientId)?.name.toLowerCase() || '' : '';
-      const bankSearch = t.bank ? t.bank.toLowerCase() : '';
-      const directSupplierSearch = suppliers.find(x => x.id === t.relatedId)?.name.toLowerCase() || '';
-      const directClientSearch = clients.find(x => x.id === t.relatedId)?.name.toLowerCase() || '';
-      const agentSearch = shippingAgents.find(x => x.id === t.relatedId)?.name.toLowerCase() || '';
-      const employeeSearch = employees.find(x => x.id === t.relatedId)?.name.toLowerCase() || '';
+        const directInvoiceSearch = t.invoiceNumber ? t.invoiceNumber.toLowerCase() : '';
+        const j = jobs.find(x => x.id === t.relatedId);
+        const invoiceSearch = j && j.invoiceNumber ? j.invoiceNumber.toLowerCase() : '';
+        const blSearch = j && j.blNumber ? j.blNumber.toLowerCase() : '';
+        const directBlSearch = t.blNumber ? t.blNumber.toLowerCase() : '';
+        const c = j && j.containerId ? containers.find(cont => cont.id === j.containerId) : null;
+        const containerSearch = c ? c.containerNumber.toLowerCase() : '';
+        
+        const supplierSearch = j && j.supplierId ? suppliers.find(x => x.id === j.supplierId)?.name.toLowerCase() || '' : '';
+        const clientSearch = j && j.clientId ? clients.find(x => x.id === j.clientId)?.name.toLowerCase() || '' : '';
+        const bankSearch = t.bank ? t.bank.toLowerCase() : '';
+        const directSupplierSearch = suppliers.find(x => x.id === t.relatedId)?.name.toLowerCase() || '';
+        const directClientSearch = clients.find(x => x.id === t.relatedId)?.name.toLowerCase() || '';
+        const agentSearch = shippingAgents.find(x => x.id === t.relatedId)?.name.toLowerCase() || '';
+        const employeeSearch = employees.find(x => x.id === t.relatedId)?.name.toLowerCase() || '';
 
-      return t.description.toLowerCase().includes(q) || 
-             t.type.replace('_', ' ').toLowerCase().includes(q) ||
-             related.toLowerCase().includes(q) ||
-             formattedDate.includes(q) ||
-             dateStringMatch ||
-             numericMatch ||
-             t.amount.toString().includes(q) ||
-             directInvoiceSearch.includes(q) ||
-             invoiceSearch.includes(q) ||
-             directBlSearch.includes(q) ||
-             blSearch.includes(q) ||
-             containerSearch.includes(q) ||
-             bankSearch.includes(q) ||
-             supplierSearch.includes(q) ||
-             clientSearch.includes(q) ||
-             directSupplierSearch.includes(q) ||
-             directClientSearch.includes(q) ||
-             agentSearch.includes(q) ||
-             employeeSearch.includes(q);
-    })
-    .sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+        return t.description.toLowerCase().includes(q) || 
+               t.type.replace('_', ' ').toLowerCase().includes(q) ||
+               related.toLowerCase().includes(q) ||
+               formattedDate.includes(q) ||
+               dateStringMatch ||
+               numericMatch ||
+               t.amount.toString().includes(q) ||
+               directInvoiceSearch.includes(q) ||
+               invoiceSearch.includes(q) ||
+               directBlSearch.includes(q) ||
+               blSearch.includes(q) ||
+               containerSearch.includes(q) ||
+               bankSearch.includes(q) ||
+               supplierSearch.includes(q) ||
+               clientSearch.includes(q) ||
+               directSupplierSearch.includes(q) ||
+               directClientSearch.includes(q) ||
+               agentSearch.includes(q) ||
+               employeeSearch.includes(q);
+      })
+      .sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  }, [visibleTransactions, filterCategory, filterEntityId, searchTerm, jobs, suppliers, clients, shippingAgents, employees, containers]);
 
   return (
     <div>
@@ -399,7 +429,6 @@ export default function Financials() {
               </Select>
             </div>
 
-            {/* Removed Weight, Packages */}
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <Label>Invoice Number (Optional)</Label>

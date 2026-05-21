@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useEffect } from 'react'; // 👈 أضفنا useEffect هنا
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import { PageHeader } from '@/components/PageHeader';
@@ -16,7 +16,28 @@ import { toast } from 'sonner';
 export default function Clients() {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const [clients, setClients] = useState<Client[]>(getClients);
+  const [clients, setClients] = useState<Client[]>([]); // 👈 جعلنا البداية مصفوفة فارغة مؤقتاً
+
+  // ============================================================================
+  // 🔥 المزامنة التلقائية عند فتح الصفحة وعمل ريفريش لمنع اختفاء البيانات 🔥
+  // ============================================================================
+  useEffect(() => {
+    // 1. جلب البيانات من الكاش فوراً إذا كانت متوفرة
+    setClients(getClients());
+
+    // 2. عمل فحص دوري خفيف (Polling) كل ثانية حتى تكتمل عملية الـ Initialize للمخزن
+    const interval = setInterval(() => {
+      const latestClients = getClients();
+      if (latestClients.length > 0) {
+        setClients(latestClients);
+        clearInterval(interval); // أوقف الفحص بمجرد ظهور البيانات
+      }
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, []);
+  // ============================================================================
+
   const jobs = useMemo(() => getJobs(), []);
   const transactions = useMemo(() => getTransactions(), []);
 
@@ -116,7 +137,6 @@ export default function Clients() {
             }
           });
 
-          // Filter out zero balances
           Object.keys(balancesObj).forEach(k => { if (Math.abs(balancesObj[k]) < 0.001) delete balancesObj[k]; });
           Object.keys(jobValueObj).forEach(k => { if (Math.abs(jobValueObj[k]) < 0.001) delete jobValueObj[k]; });
 
@@ -187,7 +207,7 @@ export default function Clients() {
             <div><Label>{t('Country *', 'Country *')}</Label><Input value={form.country} onChange={e => setForm(f => ({ ...f, country: e.target.value }))} /></div>
             <div><Label>{t('Address', 'Address')}</Label><Input value={form.address} onChange={e => setForm(f => ({ ...f, address: e.target.value }))} /></div>
             <div><Label>{t('Contact Person', 'Contact Person')}</Label><Input value={form.contact} onChange={e => setForm(f => ({ ...f, contact: e.target.value }))} /></div>
-            <div><Label>{t('Email', 'Email')}</Label><Input value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} type="email" /></div>
+<div><Label>{t('Email', 'Email')}</Label><Input value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} type="email" /></div>
             <div><Label>{t('Mobile', 'Mobile Number')}</Label><Input value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))} type="tel" dir="ltr" className="text-left" /></div>
             <div><Label>{t('Telephone', 'Telephone')}</Label><Input value={form.telephone} onChange={e => setForm(f => ({ ...f, telephone: e.target.value }))} type="tel" dir="ltr" className="text-left" /></div>
             <div><Label>{t('Fax', 'Fax')}</Label><Input value={form.fax} onChange={e => setForm(f => ({ ...f, fax: e.target.value }))} type="tel" dir="ltr" className="text-left" /></div>
@@ -201,8 +221,6 @@ export default function Clients() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
-
 
       <DeleteConfirmDialog open={deleteOpen} onOpenChange={setDeleteOpen} onConfirm={handleDelete} itemName={deleting?.name || ''} />
     </div>

@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { PageHeader } from '@/components/PageHeader';
 import { DeleteConfirmDialog } from '@/components/DeleteConfirmDialog';
@@ -16,7 +16,6 @@ import { toast } from 'sonner';
 
 export default function Commissions() {
   const { t } = useTranslation();
-  const [commissions, setCommissions] = useState<Commission[]>(getCommissions);
 
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -24,6 +23,17 @@ export default function Commissions() {
   const [deleting, setDeleting] = useState<Commission | null>(null);
   
   const [viewingFile, setViewingFile] = useState<string | null>(null);
+
+
+  const [commissions, setCommissions] = useState<Commission[]>([]);
+
+useEffect(() => {
+  setCommissions(getCommissions());
+  const timer = setTimeout(() => {
+    setCommissions(getCommissions());
+  }, 600);
+  return () => clearTimeout(timer);
+}, []);
 
   const emptyForm = { 
     date: new Date().toISOString().split('T')[0], 

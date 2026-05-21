@@ -7,13 +7,15 @@ import cors from 'cors';
 import helmet from 'helmet';
 import { fileURLToPath } from 'url';
 import compression from 'compression';
+import morgan from 'morgan';
 
-
+// حل مشكلة الـ BigInt الافتراضية
 BigInt.prototype.toJSON = function() { return Number(this) };
-
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// استيراد الـ Routes
 import archiveRoutes from './routes/archiveRoutes.js';
 import supplierRoutes from './routes/supplierRoutes.js';
 import jobRoutes from './routes/jobRoutes.js';
@@ -31,16 +33,12 @@ import authRoutes from './routes/authRoutes.js';
 import paymentRoutes from './routes/paymentRoutes.js';
 import bankRoutes from './routes/bankRoutes.js';
 
-import morgan from 'morgan';
-
-
-
 const app = express();
 
-// 1. إعداد مجلد الرفع
-const uploadDir = './uploads/';
+// 1. إعداد مجلد الرفع بمسار مطلق مستقر للـ Cloud
+const uploadDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadDir)) {
-    fs.mkdirSync(uploadDir);
+    fs.mkdirSync(uploadDir, { recursive: true });
 }
 
 const storage = multer.diskStorage({
@@ -54,21 +52,118 @@ const upload = multer({
     limits: { fileSize: 10 * 1024 * 1024 } 
 });
 
-// 2. Middlewares
+// 2. Middlewares الأساسية (CORS إعدادات متوافقة مع Render و Vercel)
 app.use(cors({
-    origin: '*', // أو حددي رابط الفرونت إند بتاعك لزيادة الأمان
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
-    allowedHeaders: ['Content-Type', 'Authorization']
+    origin: '*', 
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept']
 }));
+
 app.use(helmet({
     crossOriginResourcePolicy: { policy: "cross-origin" }
 }));
 app.use(express.json()); 
 app.use(express.urlencoded({ extended: true }));
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+app.use('/uploads', express.static(uploadDir));
 app.use(morgan('dev'));
 app.use(compression());
 app.use(express.static('public'));
+
+// ============================================================================
+// 🔥 الـ Middleware السحري المركزي الشامل لتوحيد وتأمين البيانات لكل الصفحات 🔥
+// ============================================================================
+app.use((req, res, next) => {
+    const originalJson = res.json;
+
+    res.json = function (data) {
+        
+        function transform(obj) {
+            if (obj === null || obj === undefined) return obj;
+
+            // 1. إذا كانت البيانات مصفوفة (Array)
+            if (Array.isArray(obj)) {
+                return obj.map(transform);
+            }
+
+            // 2. إذا كانت البيانات كائن (Object)
+            if (typeof obj === 'object') {
+                
+                // 🅰️ تأمين المعرف (ID) لجميع الكائنات بلا استثناء
+                if ('id' in obj && obj.id !== null && obj.id !== undefined) {
+                    obj.id = String(obj.id);
+                } else if ('_id' in obj && obj._id !== null && obj._id !== undefined) {
+                    obj.id = String(obj._id);
+                }
+
+                // 🅱️ تأمين حقول الصفحات (تعويض الحقول الإجبارية في الفرونت إند لمنع الاختفاء والانهيار)
+                
+                // تأمين العميل والـ Grid الخاص به
+                if ('address' in obj || 'agentName' in obj || 'vat' in obj) { 
+                    if (!('country' in obj)) obj.country = obj.address || "—";
+                    if (!('contact' in obj)) obj.contact = obj.agentName || "—";
+                    if (!('email' in obj)) obj.email = "—";
+                }
+
+                // تأمين الموردين (Suppliers)
+                if ('contact' in obj && !('country' in obj) && !('address' in obj)) {
+                    obj.country = "—";
+                }
+                if (('name' in obj || 'country' in obj) && !('contact' in obj) && !('address' in obj)) {
+                    obj.contact = "—";
+                    obj.email = "—";
+                }
+
+                // تأمين الموظفين (Employees)
+                if ('jobTitle' in obj || 'phone' in obj) {
+                    if (!('phone' in obj)) obj.phone = "—";
+                    if (!('jobTitle' in obj)) obj.jobTitle = "—";
+                }
+
+                // تأمين العمليات والوظائف (Jobs & Operations)
+                if ('operationType' in obj || 'jobId' in obj) {
+                    if (!('title' in obj)) obj.title = obj.product || "Operation";
+                    if (!('currency' in obj)) obj.currency = "USD";
+                    if (!('status' in obj)) obj.status = "active";
+                    if (!('notes' in obj)) obj.notes = "";
+                }
+
+                // تأمين المنتجات (Products)
+                if ('category' in obj && !('supplierId' in obj)) {
+                    obj.supplierId = "";
+                }
+
+                // 🆃 تأمين علاقات المصفوفات الدائرية لمنع الـ undefined والـ null
+                const relationFields = [
+                    'jobs', 'transactions', 'products', 'attachments', 
+                    'containerNumbers', 'supplierIds', 'repNames', 'attachments'
+                ];
+                relationFields.forEach(field => {
+                    if (field in obj && (obj[field] === null || obj[field] === undefined)) {
+                        obj[field] = [];
+                    }
+                });
+
+                // دمج وتفتيش باقي الخصائص العميقة داخل الكائن (Deep Scan)
+                for (const key in obj) {
+                    if (Object.prototype.hasOwnProperty.call(obj, key)) {
+                        obj[key] = transform(obj[key]);
+                    }
+                }
+            }
+            return obj;
+        }
+
+        // تطبيق الفلتر قبل الإرسال النهائي للفرونت إند
+        if (data) {
+            data = transform(data);
+        }
+
+        return originalJson.call(this, data);
+    };
+
+    next();
+});
+// ============================================================================
 
 // 3. استخدام الـ Routes
 app.use('/api/suppliers', supplierRoutes);
@@ -88,7 +183,6 @@ app.use('/api/auth', authRoutes);
 app.use('/api/banks', bankRoutes);
 app.use('/api/payments', paymentRoutes);
 
-
 // 4. مسار الرفع المباشر
 app.post('/api/upload', upload.single('file'), (req, res) => {
     if (!req.file) return res.status(400).send('No file uploaded.');
@@ -100,22 +194,22 @@ app.get('/', (req, res) => {
     res.send("EasyFlow Logistics Backend is Running! 🚀");
 });
 
+// التعامل المركزي مع الأخطاء
 app.use((err, req, res, next) => {
-    console.error("🚨 Error Logged:", err.stack); // بيطبع الخطأ بالتفصيل في السيرفر عندك
+    console.error("🚨 Error Logged:", err.stack);
 
     const statusCode = err.statusCode || 500;
     res.status(statusCode).json({
         success: false,
         message: err.message || "حدث خطأ داخلي في السيرفر",
-        // الاختيار ده بيظهر تفاصيل الخطأ بس وانتي في مرحلة التطوير
         stack: process.env.NODE_ENV === 'production' ? null : err.stack,
     });
 });
 
-// 5. تشغيل السيرفر
-const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
-    console.log(`Server running on http://localhost:${PORT} 🚀`);
+// 5. تشغيل السيرفر (تعديل الـ PORT الإجباري للـ Cloud)
+const PORT = process.env.PORT || 8080;
+app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Server running perfectly on port ${PORT} 🚀`);
 });
 
 export default app;

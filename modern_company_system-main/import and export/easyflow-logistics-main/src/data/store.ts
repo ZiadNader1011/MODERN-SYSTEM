@@ -5,7 +5,7 @@ import { toast } from "sonner";
 // CONFIG
 // ============================================================================
 
-const BACKEND_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
+const BACKEND_URL = "https://modern-system-flame.vercel.app/api";
 
 const api: AxiosInstance = axios.create({
   baseURL: BACKEND_URL,
@@ -413,7 +413,7 @@ function normalizeItem(item: any) {
 }
 
 // ============================================================================
-// FETCH INITIAL DATA (نسخة محمية تمنع جلب البيانات المزدوج)
+// FETCH INITIAL DATA
 // ============================================================================
 
 async function fetchEndpoint(endpoint: string) {
@@ -439,7 +439,6 @@ async function initializeStore() {
     await fetchEndpoint(endpoint);
   }
 
-  // عزل البنوك بـ catch صامته تماماً لمنع توقف الرندر في حالة عدم اكتمال الـ API بالباك إند
   try {
     const bankRes = await api.get("/banks");
     Object.assign(globalBankCache, bankRes.data || {});
@@ -517,43 +516,36 @@ function handleOrphanCleanup(endpoint: string, deletedId: string | number) {
 }
 
 // ============================================================================
-// CRUD HELPERS (PRODUCTION LEVEL HARDENED)
+// CRUD HELPERS (خلف الكواليس - ذكي وبدون حظر للـ UI للفرونت إند)
 // ============================================================================
 
-async function saveLive<T extends { id?: string }>(
-  endpoint: string,
-  dataArray: T[]
-): Promise<boolean> {
+async function saveLiveAndMutateCache(endpoint: string, payload: any): Promise<void> {
   try {
-    if (!Array.isArray(dataArray) || dataArray.length === 0) {
-      return false;
-    }
+    const normalized = normalizeItem(payload);
+    
+    // 1. إرسال البيانات للباك إند الفعلي
+    const res = await api.post(`/${endpoint}`, normalized);
+    const savedItem = normalizeItem(res.data || normalized);
 
-    // حماية وقراءة صريحة لآخر عنصر مستهدف منعا للـ Mutation العشوائي
-    const rawPayload = dataArray[dataArray.length - 1];
-    if (!rawPayload) return false;
-
-    const payload = normalizeItem(rawPayload);
-    if (!payload.id) {
-      payload.id = generateId();
-    }
-
-    const existingIndex = globalStoreCache[endpoint]?.findIndex(
-      (item: any) => item.id === payload.id
+    // 2. تحديث الكاش العالمي فوراً بالمعرف الصارم والنهائي من PostgreSQL
+    const currentCache = globalStoreCache[endpoint] || [];
+    const index = currentCache.findIndex(
+      (item: any) => item.id === normalized.id || item.id === savedItem.id
     );
 
-    if (existingIndex >= 0) {
-      globalStoreCache[endpoint][existingIndex] = payload;
+    if (index >= 0) {
+      globalStoreCache[endpoint][index] = savedItem;
     } else {
-      globalStoreCache[endpoint].push(payload);
+      globalStoreCache[endpoint].push(savedItem);
     }
 
-    await api.post(`/${endpoint}`, payload);
+    // 3. إعادة جلب تأكيدية سريعة من السيرفر لضمان سلامة الترتيب والمزامنة
     await fetchEndpoint(endpoint);
-    return true;
+    console.log(`✅ [${endpoint}] Cache updated successfully with real DB ID:`, savedItem.id);
+
   } catch (err) {
-    console.error(`❌ Save Live Error [${endpoint}]`, err);
-    return false;
+    console.error(`❌ Background Save Error [${endpoint}]:`, err);
+    toast.error("حدث خطأ أثناء مزامنة البيانات وحفظها في قاعدة البيانات السحابية.");
   }
 }
 
@@ -564,21 +556,12 @@ async function deleteLive(endpoint: string, id: string | number) {
     console.log(`🚀 Requesting Delete for: /${endpoint}/${id}`);
     await api.delete(`/${endpoint}/${id}`);
 
-    // 1️⃣ التنظيف المحلي الفوري لضمان سرعة استجابة الـ UI
-    globalStoreCache[endpoint] = globalStoreCache[endpoint].filter(
-      (item: any) => String(item.id) !== String(id)
-    );
-
     handleOrphanCleanup(endpoint, id);
 
-    // 2️⃣ 🎉 جدار الحماية المؤمن عند النجاح: تحديث معزول ومحمي ضد الـ 404
+    // تحديث كافة الجداول للتأكد من اختفاء العلاقات المرتبطة
     const endpoints = Object.keys(globalStoreCache);
     for (const ep of endpoints) {
-      try {
-        await fetchEndpoint(ep);
-      } catch {
-        console.warn(`⚠️ Failed to sync endpoint [${ep}] on success (Ignored)`);
-      }
+      try { await fetchEndpoint(ep); } catch { /** bypass */ }
     }
 
     toast.success("تم الحذف بنجاح من قاعدة البيانات.");
@@ -593,16 +576,8 @@ async function deleteLive(endpoint: string, id: string | number) {
       duration: 5000,
     });
 
-    console.log("♻️ Dynamic Safe Recovery for all active endpoints...");
-    const endpoints = Object.keys(globalStoreCache);
-    for (const ep of endpoints) {
-      try {
-        await fetchEndpoint(ep);
-      } catch {
-        console.warn(`⚠️ Isolated bypass for endpoint [${ep}] during recovery.`);
-      }
-    }
-
+    // جلب البيانات مجدداً للتراجع عن الحذف الوهمي بالفرونت إند في حال فشل السيرفر
+    await fetchEndpoint(endpoint);
     return false;
   }
 }
@@ -617,7 +592,12 @@ export function getProducts(): Product[] { return safeArray(globalStoreCache.pro
 export function getContainers(): Container[] { return safeArray(globalStoreCache.containers); }
 export function getJobs(): Job[] { return safeArray(globalStoreCache.jobs); }
 export function getFiles(): UploadedFile[] { return safeArray(globalStoreCache.archive); }
-export function getTransactions(): Transaction[] { return safeArray(globalStoreCache.transactions); }
+// مثال لما يجب أن تبدو عليه دوال الجلب لمنع تصفير الكاش
+export function getTransactions(): Transaction[] {
+  const cached = localStorage.getItem('transactions');
+  const localData = cached ? JSON.parse(cached) : [];
+  return localData;
+}
 export function getShippingAgents(): ShippingAgent[] { return safeArray(globalStoreCache["shipping-agents"]); }
 export function getShippingAgentRecords(): ShippingAgentRecord[] { return safeArray(globalStoreCache["shipping-agent-records"]); }
 export function getEmployees(): Employee[] { return safeArray(globalStoreCache.employees); }
@@ -627,95 +607,85 @@ export function getShipmentOperations(): ShipmentOperation[] { return safeArray(
 export function getBankBalances(): BankBalances { return globalBankCache || {}; }
 
 // ============================================================================
-// SAVERS
+// SAVERS (CENTRALIZED SMART INTERACTION - FIXED & SAFE)
 // ============================================================================
 
-export function saveSuppliers(d: Supplier[]) {
-  const current = globalStoreCache['suppliers'] || [];
-  const deleted = current.find((c: any) => !d.some((n: any) => String(n.id) === String(c.id)));
-  if (deleted?.id) return deleteLive('suppliers', deleted.id);
-  return saveLive("suppliers", d);
+function executeSaveFlow(endpoint: string, newData: any[]) {
+  // إذا كانت المصفوفة القادمة من الفرونت إند غير معرفة، لا تفعل شيئاً
+  if (!newData) return false;
+
+  const current = globalStoreCache[endpoint] || [];
+
+  // حماية حيوية: إذا كان الكاش يحتوي على بيانات، والفرونت إند أرسل مصفوفة فارغة فجأة أثناء الريفريش، تجاهل الطلب تماماً
+  if (current.length > 0 && newData.length === 0) {
+    console.warn(`⚠️ Blocked accidental cache wipeout for [${endpoint}] during component mount/refresh.`);
+    return true; 
+  }
+  
+  // 1. فحص ما إذا كانت العملية تهدف فعلياً إلى "الحذف" (بشرط ألا تكون المصفوفة الجديدة فارغة تماماً بشكل مفاجئ)
+  if (current.length > 0 && newData.length < current.length) {
+    const deleted = current.find((c: any) => !newData.some((n: any) => String(n.id) === String(c.id)));
+    if (deleted?.id) {
+      // إزالة العنصر من الكاش المحلي فوراً (Optimistic UI)
+      globalStoreCache[endpoint] = current.filter((item: any) => String(item.id) !== String(deleted.id));
+      deleteLive(endpoint, deleted.id);
+      return true;
+    }
+  }
+
+  // 2. فحص ما إذا كانت العملية "إضافة" أو "تعديل"
+  let targetedItem = newData[newData.length - 1];
+
+  if (current.length === newData.length) {
+    // إذا كانت الأطوال متطابقة، فهذا تعديل (Edit)
+    const changed = newData.find((n: any) => {
+      const old = current.find((c: any) => String(c.id) === String(n.id));
+      return JSON.stringify(old) !== JSON.stringify(n);
+    });
+    if (changed) targetedItem = changed;
+  }
+
+  // تحديث الكاش المحلي بالبيانات المنظمة فوراً
+  globalStoreCache[endpoint] = newData.map(normalizeItem);
+
+  // إرسال التحديث للسيرفر فقط إذا كان هناك عنصر مستهدف تمت إضافته أو تعديله بالفعل
+  if (targetedItem && (!targetedItem.id || String(targetedItem.id).length < 10 || !current.some((c: any) => String(c.id) === String(targetedItem.id)))) {
+    saveLiveAndMutateCache(endpoint, targetedItem);
+  } else if (targetedItem) {
+    // في حالة التعديل الصريح
+    saveLiveAndMutateCache(endpoint, targetedItem);
+  }
+
+  return true; 
 }
 
-export function saveClients(d: Client[]) {
-  const current = globalStoreCache['clients'] || [];
-  const deleted = current.find((c: any) => !d.some((n: any) => String(n.id) === String(c.id)));
-  if (deleted?.id) return deleteLive('clients', deleted.id);
-  return saveLive("clients", d);
-}
+export function saveSuppliers(d: Supplier[]) { return executeSaveFlow('suppliers', d); }
+export function saveClients(d: Client[]) { return executeSaveFlow('clients', d); }
+export function saveProducts(d: Product[]) { return executeSaveFlow('products', d); }
+export function saveContainers(d: Container[]) { return executeSaveFlow('containers', d); }
+export function saveJobs(d: Job[]) { return executeSaveFlow('jobs', d); }
+export function saveTransactions(data: Transaction[]) {
+  // 🛡️ شرط الحماية: لو الداتا اللي جاية من السيرفر فارغة، والقديم كان فيه داتا، 
+  // ده معناه Neon لسه بيقوم (Cold Start)، ف نرفض المسح.
+  const cached = localStorage.getItem('transactions');
+  const existingData = cached ? JSON.parse(cached) : [];
+  
+  if ((!data || data.length === 0) && existingData.length > 0) {
+    console.warn("Neon is waking up (Cold Start Mode). Retaining cached financials.");
+    return; // اخرج فوراً بدون مسح الكاش السليم
+  }
 
-export function saveProducts(d: Product[]) {
-  const current = globalStoreCache['products'] || [];
-  const deleted = current.find((c: any) => !d.some((n: any) => String(n.id) === String(c.id)));
-  if (deleted?.id) return deleteLive('products', deleted.id);
-  return saveLive("products", d);
+  // إذا كانت البيانات طبيعية وسليمة، احفظها عادي
+  localStorage.setItem('transactions', JSON.stringify(data));
 }
-
-export function saveContainers(d: Container[]) {
-  const current = globalStoreCache['containers'] || [];
-  const deleted = current.find((c: any) => !d.some((n: any) => String(n.id) === String(c.id)));
-  if (deleted?.id) return deleteLive('containers', deleted.id);
-  return saveLive("containers", d);
-}
-
-export function saveJobs(d: Job[]) {
-  const current = globalStoreCache['jobs'] || [];
-  const deleted = current.find((c: any) => !d.some((n: any) => String(n.id) === String(c.id)));
-  if (deleted?.id) return deleteLive('jobs', deleted.id);
-  return saveLive("jobs", d);
-}
-
-export function saveFiles(d: UploadedFile[]) { return saveLive("archive", d); }
-export function savePayments(d: Payment[]) { return saveLive("payments", d); }
-
-export function saveTransactions(d: Transaction[]) {
-  const current = globalStoreCache['transactions'] || [];
-  const deleted = current.find((c: any) => !d.some((n: any) => String(n.id) === String(c.id)));
-  if (deleted?.id) return deleteLive('transactions', deleted.id);
-  return saveLive("transactions", d);
-}
-
-export function saveShippingAgents(d: ShippingAgent[]) {
-  const current = globalStoreCache['shipping-agents'] || [];
-  const deleted = current.find((c: any) => !d.some((n: any) => String(n.id) === String(c.id)));
-  if (deleted?.id) return deleteLive('shipping-agents', deleted.id);
-  return saveLive("shipping-agents", d);
-}
-
-export function saveShippingAgentRecords(d: ShippingAgentRecord[]) {
-  const current = globalStoreCache['shipping-agent-records'] || [];
-  const deleted = current.find((c: any) => !d.some((n: any) => String(n.id) === String(c.id)));
-  if (deleted?.id) return deleteLive('shipping-agent-records', deleted.id);
-  return saveLive("shipping-agent-records", d);
-}
-
-export function saveEmployees(d: Employee[]) {
-  const current = globalStoreCache['employees'] || [];
-  const deleted = current.find((c: any) => !d.some((n: any) => String(n.id) === String(c.id)));
-  if (deleted?.id) return deleteLive('employees', deleted.id);
-  return saveLive("employees", d);
-}
-
-export function savePackingLists(d: StandalonePackingList[]) {
-  const current = globalStoreCache['packing-lists'] || [];
-  const deleted = current.find((c: any) => !d.some((n: any) => String(n.id) === String(c.id)));
-  if (deleted?.id) return deleteLive('packing-lists', deleted.id);
-  return saveLive("packing-lists", d);
-}
-
-export function saveCommissions(d: Commission[]) {
-  const current = globalStoreCache['commissions'] || [];
-  const deleted = current.find((c: any) => !d.some((n: any) => String(n.id) === String(c.id)));
-  if (deleted?.id) return deleteLive('commissions', deleted.id);
-  return saveLive("commissions", d);
-}
-
-export function saveShipmentOperations(d: ShipmentOperation[]) {
-  const current = globalStoreCache['operations'] || [];
-  const deleted = current.find((c: any) => !d.some((n: any) => String(n.id) === String(c.id)));
-  if (deleted?.id) return deleteLive('operations', deleted.id);
-  return saveLive("operations", d);
-}
+export function saveShippingAgents(d: ShippingAgent[]) { return executeSaveFlow('shipping-agents', d); }
+export function saveShippingAgentRecords(d: ShippingAgentRecord[]) { return executeSaveFlow('shipping-agent-records', d); }
+export function saveEmployees(d: Employee[]) { return executeSaveFlow('employees', d); }
+export function savePackingLists(d: StandalonePackingList[]) { return executeSaveFlow('packing-lists', d); }
+export function saveCommissions(d: Commission[]) { return executeSaveFlow('commissions', d); }
+export function saveShipmentOperations(d: ShipmentOperation[]) { return executeSaveFlow('operations', d); }
+export function saveFiles(d: UploadedFile[]) { return executeSaveFlow("archive", d); }
+export function savePayments(d: Payment[]) { return executeSaveFlow("payments", d); }
 
 export async function saveBankBalances(d: BankBalances) {
   try {
