@@ -35,23 +35,33 @@ import bankRoutes from './routes/bankRoutes.js';
 
 const app = express();
 
-//  الكود الجديد المضمون 100% لبيئة Vercel
+// ==========================================
+// 🛠️ إعداد مجلد الرفع المتوافق 100% مع Serverless
+// ==========================================
 import os from 'os';
-// هنا بنأمنه لو قرأ NODE_ENV أو اكتشف بيئة VERCel تلقائياً
-const isProduction = process.env.NODE_ENV === 'production' || process.env.VERCEL === '1';
-const uploadDir = isProduction ? path.join(os.tmpdir(), 'uploads') : path.join(__dirname, 'uploads');
+const isProduction = process.env.NODE_ENV === 'production' || process.env.VERCEL === '1' || !process.env.PORT;
+let uploadDir;
 
-// بنخليه ينشئ المجلد محلياً عندك على الجهاز فقط، ومستحيل يلمس السيرفر في الـ Production
-if (!isProduction && !fs.existsSync(uploadDir)) {
-    fs.mkdirSync(uploadDir, { recursive: true });
+if (isProduction) {
+    // في بيئة فيرسيل بنجبره يروح للمجلد المؤقت فوراً بدون إنشاء أي ملفات نظام
+    uploadDir = path.join(os.tmpdir(), 'uploads');
+} else {
+    // محلياً عندك على الجهاز فقط بيشتغل طبيعي
+    uploadDir = path.join(__dirname, 'uploads');
+    if (!fs.existsSync(uploadDir)) {
+        fs.mkdirSync(uploadDir, { recursive: true });
+    }
 }
 
 const storage = multer.diskStorage({
-    destination: uploadDir,
+    destination: (req, file, cb) => {
+        cb(null, uploadDir);
+    },
     filename: function (req, file, cb) {
         cb(null, Date.now() + '-' + file.originalname);
     }
 });
+
 const upload = multer({ 
     storage: storage,
     limits: { fileSize: 10 * 1024 * 1024 } 
@@ -70,7 +80,9 @@ app.use(helmet({
 }));
 app.use(express.json()); 
 app.use(express.urlencoded({ extended: true }));
-app.use('/uploads', express.static(uploadDir));
+if (!isProduction) {
+    app.use('/uploads', express.static(uploadDir));
+}
 app.use(morgan('dev'));
 app.use(compression());
 app.use(express.static('public'));
