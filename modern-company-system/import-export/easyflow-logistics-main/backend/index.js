@@ -35,12 +35,14 @@ import bankRoutes from './routes/bankRoutes.js';
 
 const app = express();
 
-// 1. إعداد مجلد الرفع بمسار متوافق مع الـ Serverless والـ Local معاً
+//  الكود الجديد المضمون 100% لبيئة Vercel
 import os from 'os';
-const isProduction = process.env.NODE_ENV === 'production';
+// هنا بنأمنه لو قرأ NODE_ENV أو اكتشف بيئة VERCel تلقائياً
+const isProduction = process.env.NODE_ENV === 'production' || process.env.VERCEL === '1';
 const uploadDir = isProduction ? path.join(os.tmpdir(), 'uploads') : path.join(__dirname, 'uploads');
 
-if (!fs.existsSync(uploadDir)) {
+// بنخليه ينشئ المجلد محلياً عندك على الجهاز فقط، ومستحيل يلمس السيرفر في الـ Production
+if (!isProduction && !fs.existsSync(uploadDir)) {
     fs.mkdirSync(uploadDir, { recursive: true });
 }
 
