@@ -67,12 +67,26 @@ const upload = multer({
     limits: { fileSize: 10 * 1024 * 1024 } 
 });
 
+// قائمة بالمواقع المسموح لها بطلب بيانات من الباك اند
+const allowedOrigins = [
+    'https://modern-system-frontend-mdr0it2xr-ziad-s-projects6.vercel.app', // رابط الفرونت اند الخاص بك
+    'https://modern-system-frontend.vercel.app', // الرابط الأساسي للفرونت اند لو وجد
+    'http://localhost:5173', // لو بتجرب محلياً باستخدام Vite
+    'http://localhost:3000'
+];
 
 app.use(cors({
-    origin: true, 
+    origin: function (origin, callback) {
+        // السماح بالطلبات التي ليس لها origin (مثل تطبيقات الموبايل أو curl) أو الروابط المحددة في القائمة
+        if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+            callback(null, true);
+        } else {
+            callback(new Error('Not allowed by CORS'));
+        }
+    },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept']
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin']
 }));
 
 app.use(helmet({
