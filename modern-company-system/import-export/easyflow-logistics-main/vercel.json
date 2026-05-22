@@ -3,6 +3,10 @@
     {
       "source": "/api/:path*",
       "destination": "https://modern-system-flame.vercel.app/api/:path*"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
     }
   ]
 }
