@@ -4,8 +4,10 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = "postgresql://neondb_owner:npg_JK5SaDHX1sGe@ep-noisy-thunder-ap8pyywm.c-7.us-east-1.aws.neon.tech/neondb?sslmode=require"
+  url       = env("DATABASE_URL")    
+  directUrl = env("DIRECT_URL")
 }
+
 
 // 1. موديل العملاء - تم ضبط الحقول والارتباط بالمعاملات
 model Client {
