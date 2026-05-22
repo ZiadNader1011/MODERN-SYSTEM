@@ -76,21 +76,16 @@ const allowedOrigins = [
 ];
 
 app.use(cors({
-    origin: function (origin, callback) {
-        // السماح بالطلبات التي ليس لها origin (مثل تطبيقات الموبايل أو curl) أو الروابط المحددة في القائمة
-        if (!origin || allowedOrigins.indexOf(origin) !== -1) {
-            callback(null, true);
-        } else {
-            callback(new Error('Not allowed by CORS'));
-        }
-    },
+    origin: true, // 💡 تجعل السيرفر يوافق ديناميكياً على أي رابط يرسل له (تغني عن مصفوفة الروابط)
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin']
 }));
 
+// إعدادات خوذة الأمان لحماية الروابط المتقاطعة بدون حجبها
 app.use(helmet({
-    crossOriginResourcePolicy: { policy: "cross-origin" }
+    crossOriginResourcePolicy: { policy: "cross-origin" },
+    crossOriginOpenerPolicy: { policy: "unsafe-none" } // 💡 تمنع حجب المتصفحات للطلبات الخارجية
 }));
 app.use(express.json()); 
 app.use(express.urlencoded({ extended: true }));
