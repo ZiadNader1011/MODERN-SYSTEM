@@ -53,9 +53,8 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage: storage, limits: { fileSize: 10 * 1024 * 1024 } });
 
+// السماح بالروابط المحلية الثابتة والروابط الرئيسية
 const allowedOrigins = [
-    'https://modern-system-frontend-pv24wb8sj-ziad-s-projects6.vercel.app', // 👈 هذا الرابط الذي ظهر في الخطأ الأخير
-    'https://modern-system-frontend-mdr0it2xr-ziad-s-projects6.vercel.app', 
     'https://modern-system-frontend.vercel.app', 
     'http://localhost:5173', 
     'http://localhost:3000',
@@ -64,10 +63,14 @@ const allowedOrigins = [
 
 app.use(cors({
     origin: function (origin, callback) {
-        // السماح بالطلبات التي لا تحتوي على origin (مثل تطبيقات الموبايل أو الـ Postman)
+        // السماح بالطلبات التي لا تحتوي على origin (مثل تطبيقات الموبايل أو Postman)
         if (!origin) return callback(null, true);
         
-        if (allowedOrigins.indexOf(origin) !== -1 || !isProduction) {
+        // فحص ما إذا كان الرابط محلياً، أو مسجلاً بالقائمة، أو يمثل رابطاً فرعياً من Vercel
+        const isVercelPreview = origin.endsWith('.vercel.app');
+        const isAllowed = allowedOrigins.indexOf(origin) !== -1 || isVercelPreview || !isProduction;
+
+        if (isAllowed) {
             callback(null, true);
         } else {
             callback(new Error('Not allowed by CORS'));
