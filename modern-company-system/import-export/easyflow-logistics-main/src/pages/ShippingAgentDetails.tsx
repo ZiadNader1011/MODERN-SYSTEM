@@ -154,7 +154,7 @@ export default function ShippingAgentDetails() {
 
       // 🌐 المزامنة المباشرة مع سيرفر الباك إند عبر الـ API الموحد لملفات السجلات
       // يرجى تغيير الرابط التابع للـ Record Controller الخاص بك إذا لزم الأمر
-      const baseUrl = `http://localhost:5000/api/shipping-agent-records`;
+      const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000';
       const url = editing ? `${baseUrl}/${editing.id}` : baseUrl;
       const method = editing ? 'PUT' : 'POST';
 

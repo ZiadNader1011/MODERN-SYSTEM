@@ -3,6 +3,7 @@ import { BrowserRouter, Route, Routes, Navigate } from "react-router-dom";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AppLayout } from "@/components/AppLayout";
+import React, { Suspense } from "react"; // 👈 تم إضافة React و Suspense هنا
 import axios from 'axios';
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
@@ -35,7 +36,6 @@ axios.interceptors.request.use((config) => {
   return config;
 });
 
-// 🚀 تم إلغاء حظر التحقق من التوكن صامتاً مع الحفاظ الكامل على الـ AppLayout لحماية التصميم والـ Sidebar
 const LayoutWrapper = ({ children }: { children: React.ReactNode }) => {
   return <AppLayout>{children}</AppLayout>;
 };
@@ -45,34 +45,38 @@ const App = () => (
     <TooltipProvider>
       <Sonner />
       <BrowserRouter>
-        <Routes>
-          {/* صفحة اللوجين خارج الـ AppLayout عشان تظهر شاشة كاملة */}
-          <Route path="/login" element={<Login />} />
-          
-          <Route path="/" element={<Navigate to="/dashboard" replace />} />
+        {/* 🚀 تغليف الـ Routes بـ Suspense لحماية نظام الترجمة i18n من عمل Crash للفرونت إند */}
+        <Suspense fallback={
+          <div style={{ display: 'flex', height: '100vh', alignItems: 'center', justifyContent: 'center', fontFamily: 'sans-serif', color: '#666' }}>
+            Loading System...
+          </div>
+        }>
+          <Routes>
+            <Route path="/login" element={<Login />} />
+            <Route path="/" element={<Navigate to="/dashboard" replace />} />
 
-          {/* تغليف الروتس بـ LayoutWrapper لضمان ثبات معمارية ورندر السايت */}
-          <Route path="/dashboard" element={<LayoutWrapper><Dashboard /></LayoutWrapper>} />
-          <Route path="/jobs" element={<LayoutWrapper><Jobs /></LayoutWrapper>} />
-          <Route path="/jobs/:id" element={<LayoutWrapper><JobDetails /></LayoutWrapper>} />
-          <Route path="/clients" element={<LayoutWrapper><Clients /></LayoutWrapper>} />
-          <Route path="/clients/:id" element={<LayoutWrapper><ClientDetails /></LayoutWrapper>} />
-          <Route path="/suppliers" element={<LayoutWrapper><Suppliers /></LayoutWrapper>} />
-          <Route path="/suppliers/:id" element={<LayoutWrapper><SupplierDetails /></LayoutWrapper>} />
-          <Route path="/products" element={<LayoutWrapper><Products /></LayoutWrapper>} />
-          <Route path="/containers" element={<LayoutWrapper><Containers /></LayoutWrapper>} />
-          <Route path="/financials" element={<LayoutWrapper><Financials /></LayoutWrapper>} />
-          <Route path="/banks" element={<LayoutWrapper><Banks /></LayoutWrapper>} />
-          <Route path="/shipping-agents" element={<LayoutWrapper><ShippingAgents /></LayoutWrapper>} />
-          <Route path="/shipping-agents/:id" element={<LayoutWrapper><ShippingAgentDetails /></LayoutWrapper>} />
-          <Route path="/employees" element={<LayoutWrapper><Employees /></LayoutWrapper>} />
-          <Route path="/packing-lists" element={<LayoutWrapper><PackingLists /></LayoutWrapper>} />
-          <Route path="/commissions" element={<LayoutWrapper><Commissions /></LayoutWrapper>} />
-          <Route path="/operations" element={<LayoutWrapper><Operations /></LayoutWrapper>} />
-          <Route path="/archive" element={<LayoutWrapper><ArchivePage /></LayoutWrapper>} />
+            <Route path="/dashboard" element={<LayoutWrapper><Dashboard /></LayoutWrapper>} />
+            <Route path="/jobs" element={<LayoutWrapper><Jobs /></LayoutWrapper>} />
+            <Route path="/jobs/:id" element={<LayoutWrapper><JobDetails /></LayoutWrapper>} />
+            <Route path="/clients" element={<LayoutWrapper><Clients /></LayoutWrapper>} />
+            <Route path="/clients/:id" element={<LayoutWrapper><ClientDetails /></LayoutWrapper>} />
+            <Route path="/suppliers" element={<LayoutWrapper><Suppliers /></LayoutWrapper>} />
+            <Route path="/suppliers/:id" element={<LayoutWrapper><SupplierDetails /></LayoutWrapper>} />
+            <Route path="/products" element={<LayoutWrapper><Products /></LayoutWrapper>} />
+            <Route path="/containers" element={<LayoutWrapper><Containers /></LayoutWrapper>} />
+            <Route path="/financials" element={<LayoutWrapper><Financials /></LayoutWrapper>} />
+            <Route path="/banks" element={<LayoutWrapper><Banks /></LayoutWrapper>} />
+            <Route path="/shipping-agents" element={<LayoutWrapper><ShippingAgents /></LayoutWrapper>} />
+            <Route path="/shipping-agents/:id" element={<LayoutWrapper><ShippingAgentDetails /></LayoutWrapper>} />
+            <Route path="/employees" element={<LayoutWrapper><Employees /></LayoutWrapper>} />
+            <Route path="/packing-lists" element={<LayoutWrapper><PackingLists /></LayoutWrapper>} />
+            <Route path="/commissions" element={<LayoutWrapper><Commissions /></LayoutWrapper>} />
+            <Route path="/operations" element={<LayoutWrapper><Operations /></LayoutWrapper>} />
+            <Route path="/archive" element={<LayoutWrapper><ArchivePage /></LayoutWrapper>} />
 
-          <Route path="*" element={<NotFound />} />
-        </Routes>
+            <Route path="*" element={<NotFound />} />
+          </Routes>
+        </Suspense>
       </BrowserRouter>
     </TooltipProvider>
   </QueryClientProvider>
