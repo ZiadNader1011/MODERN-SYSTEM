@@ -159,15 +159,24 @@ export default function Containers() {
   const handleSave = async () => {
     if (!form.containerNumber.trim()) { toast.error('Please enter a container number.'); return; }
     
+    // 1. تنظيف وإعداد بيانات المنتجات وتحويلها لأرقام صريحة
     const parsedProducts = (form.products || []).map(p => ({
-      ...p,
+      productId: p.productId,
       quantity: Number(p.quantity) || 0,
       packages: Number(p.packages) || 0,
       netWeight: Number(p.netWeight) || 0,
-      grossWeight: Number(p.grossWeight) || 0
+      grossWeight: Number(p.grossWeight) || 0,
+      packageType: p.packageType || ''
     }));
 
-    const containerData = { ...form, products: parsedProducts };
+    // 2. تنظيف التواريخ: إذا كانت نصوص فارغة نحولها إلى null لمنع خطأ الباك إند
+    const containerData = { 
+      ...form, 
+      shippingDate: form.shippingDate && form.shippingDate.trim() !== '' ? form.shippingDate : null,
+      arrivalDate: form.arrivalDate && form.arrivalDate.trim() !== '' ? form.arrivalDate : null,
+      products: parsedProducts 
+    };
+
     const savingToast = toast.loading('Saving container details to cloud...');
 
     try {
@@ -186,9 +195,11 @@ export default function Containers() {
         });
       }
 
+      // لمعرفة السبب الدقيق للخطأ في الـ Console إذا استمرت المشكلة
       if (!response.ok) {
         const errData = await response.json().catch(() => ({}));
-        throw new Error(errData.error || 'Failed to save container on backend server');
+        console.error("Backend validation error details:", errData);
+        throw new Error(errData.error || errData.message || 'Failed to save container on backend server');
       }
 
       toast.success(editing ? `Container "${form.containerNumber}" updated! ✨` : `Container "${form.containerNumber}" added! 🎉`, { id: savingToast });
