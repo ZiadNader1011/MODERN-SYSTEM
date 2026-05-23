@@ -17,7 +17,7 @@ import { supabase } from '@/utils/supabaseClient'; // ✅ استدعاء عمي�
 // تحديد رابط الباك إند ديناميكياً
 const BASE_URL = window.location.hostname === 'localhost' 
   ? 'http://localhost:5000' 
-  : 'https://modern-system-backend.vercel.app';
+  : 'https://modern-system-flame.vercel.app';
 
 export default function ShippingAgents() {
   const { t } = useTranslation();
