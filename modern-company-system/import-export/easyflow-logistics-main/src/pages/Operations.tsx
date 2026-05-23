@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { useTranslation } from '../../node_modules/react-i18next';
+import { useTranslation } from 'react-i18next';
 import { PageHeader } from '@/components/PageHeader';
 import { DeleteConfirmDialog } from '@/components/DeleteConfirmDialog';
 import { generateId, ShipmentOperation, formatDate, getJobs, getClients, getContainers } from '@/data/store';
@@ -19,40 +19,38 @@ import { supabase } from '@/utils/supabaseClient';
 export default function Operations() {
   const { t } = useTranslation();
 
-  const jobs = getJobs();
-  const clients = getClients();
-  const containers = getContainers();
+  const jobs = getJobs() || [];
+  const clients = getClients() || [];
+  const containers = getContainers() || [];
 
   const [operations, setOperations] = useState<ShipmentOperation[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
-  // 1. جلب البيانات من جدول سوبابيز مباشرة عند تحميل الصفحة
   const fetchOperations = async () => {
     try {
       setIsLoading(true);
-     const { data, error } = await supabase
-  .from('shipment_operations')
-  .select('*')
-  .order('operation_date', { ascending: false });
+      const { data, error } = await supabase
+        .from('shipment_operations')
+        .select('*')
+        .order('operation_date', { ascending: false });
 
       if (error) throw error;
 
-      // ضبط أسماء الأعمدة لتطابق واجهة الـ React (CamelCase)
       const formattedData = (data || []).map((row: any) => ({
         id: row.id,
-        operationDate: row.operationDate || row.operation_date, 
-        loadingDate: row.loadingDate || row.loading_date,
-        jobId: row.jobId || row.job_id,
-        clientName: row.clientName || row.client_name,
+        operationDate: row.operation_date || row.operationDate, 
+        loadingDate: row.loading_date || row.loadingDate,
+        jobId: row.job_id || row.jobId,
+        clientName: row.client_name || row.clientName,
         product: row.product,
         quantity: row.quantity,
-        numberOfContainers: row.numberOfContainers || row.number_of_containers,
-        containerNumber: row.containerNumber || row.container_number,
-        responsiblePerson: row.responsiblePerson || row.responsible_person,
-        qualityRepresentative: row.qualityRepresentative || row.quality_representative,
+        numberOfContainers: row.number_of_containers || row.numberOfContainers,
+        containerNumber: row.container_number || row.containerNumber,
+        responsiblePerson: row.responsible_person || row.responsiblePerson,
+        qualityRepresentative: row.quality_representative || row.qualityRepresentative,
         notes: row.notes,
-        attachments: row.attachments || [],
-        createdAt: row.createdAt || row.created_at
+        attachments: Array.isArray(row.attachments) ? row.attachments : [],
+        createdAt: row.created_at || row.createdAt
       }));
 
       setOperations(formattedData);
@@ -101,7 +99,6 @@ export default function Operations() {
   const openEdit = (op: any) => {
     setEditing(op);
     setForm({ 
-      // تأمين قراءة المتغيرات بكلا الصيغتين CamelCase و SnakeCase لتجنب الـ undefined عند التعديل
       operationDate: op.operationDate || op.operation_date || new Date().toISOString().split('T')[0], 
       jobId: op.jobId ? op.jobId.toString() : (op.job_id ? op.job_id.toString() : 'none'), 
       clientName: op.clientName || op.client_name || '', 
@@ -113,7 +110,7 @@ export default function Operations() {
       responsiblePerson: op.responsiblePerson || op.responsible_person || '',
       qualityRepresentative: op.qualityRepresentative || op.quality_representative || '',
       notes: op.notes || '',
-      attachments: [...(op.attachments || [])]
+      attachments: Array.isArray(op.attachments) ? [...op.attachments] : []
     });
     setEditOpen(true);
   };
@@ -142,7 +139,7 @@ export default function Operations() {
         const filePath = `operations/${fileName}`;
 
         const { error } = await supabase.storage
-          .from('commissions-attachments')
+          .from('attachments') 
           .upload(filePath, fileToUpload, {
             cacheControl: '3600',
             upsert: false,
@@ -152,14 +149,14 @@ export default function Operations() {
         if (error) throw error;
 
         const { data: { publicUrl } } = supabase.storage
-          .from('commissions-attachments')
+          .from('attachments') 
           .getPublicUrl(filePath);
 
         setForm(f => ({
           ...f,
           attachments: [
             ...f.attachments, 
-            { id: generateId(), url: publicUrl, description: '', createdAt: new Date().toISOString() }
+            { id: generateId(), url: publicUrl, description: file.name, createdAt: new Date().toISOString() }
           ]
         }));
 
@@ -180,7 +177,7 @@ export default function Operations() {
       const filename = fileUrl.split('/').pop();
       if (filename) {
         await supabase.storage
-          .from('commissions-attachments')
+          .from('attachments') 
           .remove([`operations/${filename}`]);
       }
 
@@ -195,25 +192,24 @@ export default function Operations() {
     }
   };
 
-  // 2. دالة الحفظ المعدلة لترسل البيانات والتعديلات فوراً لقاعدة بيانات سوبابيز السحابية
   const handleSave = async () => {
     const recordId = editing ? editing.id : generateId();
     const finalJobId = form.jobId && form.jobId !== 'none' ? form.jobId : null;
 
     const dbData = {
       id: recordId,
-      operationDate: form.operationDate,
-      loadingDate: form.loadingDate,
-      jobId: finalJobId,
-      clientName: form.clientName,
-      product: form.product,
-      quantity: form.quantity,
-      numberOfContainers: form.numberOfContainers,
-      containerNumber: form.containerNumber,
-      responsiblePerson: form.responsiblePerson,
-      qualityRepresentative: form.qualityRepresentative,
-      notes: form.notes,
-      attachments: form.attachments
+      operation_date: form.operationDate || null,      
+      loading_date: form.loadingDate || null,          
+      job_id: finalJobId,                              
+      client_name: form.clientName || '',                    
+      product: form.product || '',
+      quantity: form.quantity ? String(form.quantity) : null,
+      number_of_containers: form.numberOfContainers || null, 
+      container_number: form.containerNumber || null,       
+      responsible_person: form.responsiblePerson || null,   
+      quality_representative: form.qualityRepresentative || null, 
+      notes: form.notes || '',
+      attachments: form.attachments || []
     };
 
     const savingToast = toast.loading('Saving changes to Supabase...');
@@ -234,7 +230,6 @@ export default function Operations() {
     }
   };
 
-  // 3. دالة الحذف المعدلة لمسح السجل بالكامل من السيرفر
   const handleDelete = async () => {
     if (!deleting) return;
     const deletingToast = toast.loading('Removing operation from server...');
@@ -244,7 +239,7 @@ export default function Operations() {
         for (const att of deleting.attachments) {
           const filename = att.url.split('/').pop();
           if (filename) {
-            await supabase.storage.from('commissions-attachments').remove([`operations/${filename}`]);
+            await supabase.storage.from('attachments').remove([`operations/${filename}`]);
           }
         }
       }
@@ -258,6 +253,7 @@ export default function Operations() {
 
       toast.success('Operation removed successfully', { id: deletingToast });
       setDeleting(null);
+      setDeleteOpen(false);
       fetchOperations();
     } catch (error: any) {
       console.error('Delete error:', error);
@@ -292,7 +288,7 @@ export default function Operations() {
                     {op.clientName || 'Unnamed Client'} 
                     {op.jobId && op.jobId.toString() !== 'none' && (
                       <span className="text-muted-foreground font-normal ml-2 text-sm">
-                        | Job: {jobs.find(j => String(j.id) === String(op.jobId))?.title || op.jobId}
+                        | Job: {jobs?.find(j => String(j.id) === String(op.jobId))?.title || op.jobId}
                       </span>
                     )}
                   </h3>
@@ -301,11 +297,11 @@ export default function Operations() {
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-x-4 gap-y-3 mt-4 text-sm">
                   <div>
                     <span className="text-muted-foreground block text-xs uppercase">{t('Operation Date', 'تاريخ العملية')}</span>
-                    <span className="font-medium flex items-center gap-1"><Calendar className="h-3 w-3" /> {formatDate(op.operationDate)}</span>
+                    <span className="font-medium flex items-center gap-1"><Calendar className="h-3 w-3" /> {op.operationDate ? formatDate(op.operationDate) : '—'}</span>
                   </div>
                   <div>
                     <span className="text-muted-foreground block text-xs uppercase">{t('Loading Date', 'تاريخ تحميل الحاوية')}</span>
-                    <span className="font-medium flex items-center gap-1"><Calendar className="h-3 w-3" /> {formatDate(op.loadingDate)}</span>
+                    <span className="font-medium flex items-center gap-1"><Calendar className="h-3 w-3" /> {op.loadingDate ? formatDate(op.loadingDate) : '—'}</span>
                   </div>
                   <div>
                     <span className="text-muted-foreground block text-xs uppercase">{t('Product', 'المنتج')}</span>
@@ -404,13 +400,13 @@ export default function Operations() {
               <Select 
                 value={form.jobId || 'none'} 
                 onValueChange={(v) => {
-                  const j = jobs.find(x => String(x.id) === String(v));
+                  const j = jobs?.find(x => String(x.id) === String(v));
                   setForm(f => ({ 
                     ...f, 
                     jobId: v, 
-                    clientName: j ? clients.find(c => c.id === j.clientId)?.name || f.clientName : f.clientName, 
+                    clientName: j ? clients?.find(c => c.id === j.clientId)?.name || f.clientName : f.clientName, 
                     numberOfContainers: j ? j.numberOfContainers?.toString() || f.numberOfContainers : f.numberOfContainers, 
-                    containerNumber: j && j.containerId ? containers.find(c => c.id === j.containerId)?.containerNumber || f.containerNumber : f.containerNumber 
+                    containerNumber: j && j.containerId ? containers?.find(c => c.id === j.containerId)?.containerNumber || f.containerNumber : f.containerNumber 
                   }));
                 }}
               >
@@ -424,42 +420,42 @@ export default function Operations() {
 
             <div>
               <Label>{t('Client Name', 'اسم العميل')}</Label>
-              <Input value={form.clientName} onChange={e => setForm(f => ({ ...f, clientName: e.target.value }))} />
+              <Input value={form.clientName || ''} onChange={e => setForm(f => ({ ...f, clientName: e.target.value }))} />
             </div>
 
             <div>
               <Label>{t('Product', 'المنتج')}</Label>
-              <Input value={form.product} onChange={e => setForm(f => ({ ...f, product: e.target.value }))} />
+              <Input value={form.product || ''} onChange={e => setForm(f => ({ ...f, product: e.target.value }))} />
             </div>
 
             <div>
               <Label>{t('Quantity', 'الكمية')}</Label>
-              <Input value={form.quantity} onChange={e => setForm(f => ({ ...f, quantity: e.target.value }))} />
+              <Input value={form.quantity || ''} onChange={e => setForm(f => ({ ...f, quantity: e.target.value }))} />
             </div>
 
             <div>
               <Label>{t('Number of Containers', 'عدد الحاويات')} <span className="text-xs text-muted-foreground">(Optional)</span></Label>
-              <Input value={form.numberOfContainers} onChange={e => setForm(f => ({ ...f, numberOfContainers: e.target.value }))} />
+              <Input value={form.numberOfContainers || ''} onChange={e => setForm(f => ({ ...f, numberOfContainers: e.target.value }))} />
             </div>
 
             <div>
               <Label>{t('Container Number', 'رقم الحاوية')} <span className="text-xs text-muted-foreground">(Optional)</span></Label>
-              <Input value={form.containerNumber} onChange={e => setForm(f => ({ ...f, containerNumber: e.target.value }))} />
+              <Input value={form.containerNumber || ''} onChange={e => setForm(f => ({ ...f, containerNumber: e.target.value }))} />
             </div>
 
             <div>
               <Label>{t('Responsible Person', 'Responsible Person')} <span className="text-xs text-muted-foreground">(Optional)</span></Label>
-              <Input value={form.responsiblePerson} onChange={e => setForm(f => ({ ...f, responsiblePerson: e.target.value }))} />
+              <Input value={form.responsiblePerson || ''} onChange={e => setForm(f => ({ ...f, responsiblePerson: e.target.value }))} />
             </div>
 
             <div>
               <Label>{t('Quality Rep.', 'مندوب الجودة')} <span className="text-xs text-muted-foreground">(Optional)</span></Label>
-              <Input value={form.qualityRepresentative} onChange={e => setForm(f => ({ ...f, qualityRepresentative: e.target.value }))} />
+              <Input value={form.qualityRepresentative || ''} onChange={e => setForm(f => ({ ...f, qualityRepresentative: e.target.value }))} />
             </div>
 
             <div className="md:col-span-2">
               <Label>{t('Notes', 'ملاحظات')}</Label>
-              <Textarea value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} className="h-20" />
+              <Textarea value={form.notes || ''} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} className="h-20" />
             </div>
 
             <div className="md:col-span-2 border-t pt-4 mt-2">
@@ -481,7 +477,7 @@ export default function Operations() {
                         <FileText className="h-5 w-5 text-muted-foreground" />
                       </div>
                     )}
-                    <Input className="h-8 text-xs flex-1" placeholder="Description..." value={att.description} onChange={e => {
+                    <Input className="h-8 text-xs flex-1" placeholder="Description..." value={att.description || ''} onChange={e => {
                       setForm(f => {
                         const atts = [...f.attachments];
                         atts[i] = { ...atts[i], description: e.target.value };

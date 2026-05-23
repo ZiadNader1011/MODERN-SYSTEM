@@ -54,6 +54,7 @@ const storage = multer.diskStorage({
 const upload = multer({ storage: storage, limits: { fileSize: 10 * 1024 * 1024 } });
 
 const allowedOrigins = [
+    'https://modern-system-frontend-pv24wb8sj-ziad-s-projects6.vercel.app', // 👈 هذا الرابط الذي ظهر في الخطأ الأخير
     'https://modern-system-frontend-mdr0it2xr-ziad-s-projects6.vercel.app', 
     'https://modern-system-frontend.vercel.app', 
     'http://localhost:5173', 
@@ -63,7 +64,9 @@ const allowedOrigins = [
 
 app.use(cors({
     origin: function (origin, callback) {
+        // السماح بالطلبات التي لا تحتوي على origin (مثل تطبيقات الموبايل أو الـ Postman)
         if (!origin) return callback(null, true);
+        
         if (allowedOrigins.indexOf(origin) !== -1 || !isProduction) {
             callback(null, true);
         } else {
@@ -71,17 +74,9 @@ app.use(cors({
         }
     },
     credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept']
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'X-Api-Version']
 }));
-
-app.options('*', (req, res) => {
-    res.setHeader("Access-Control-Allow-Origin", req.headers.origin || "*");
-    res.setHeader("Access-Control-Allow-Methods", "GET,OPTIONS,PATCH,DELETE,POST,PUT");
-    res.setHeader("Access-Control-Allow-Headers", "X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version, Authorization");
-    res.setHeader("Access-Control-Allow-Credentials", "true");
-    return res.status(200).end();
-});
 
 app.use(helmet({
     crossOriginResourcePolicy: { policy: "cross-origin" },

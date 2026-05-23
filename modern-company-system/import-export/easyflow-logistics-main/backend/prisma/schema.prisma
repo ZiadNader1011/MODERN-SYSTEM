@@ -249,30 +249,41 @@ model ShippingAgentRecord {
 }
 
 model PackingList {
-  id                 Int       @id @default(autoincrement())
-  date               DateTime
-  blNumber           String?
-  clientName         String
-  invoiceNumber      String?
-  customRelease      String?
-  note               String?   @db.Text
-  shippingAgent      String?
-  pol                String?
-  pod                String?
-  finalDestination   String?
-  shippingDate       DateTime?
-  dhlNumber          String?
-  numberOfContainers Int       @default(0)
-  numberOfProducts   Int       @default(0)
-  containerNumbers   Json?     @default("[]")
-  products           Json?     @default("[]")
-  attachments        Json?     @default("[]")
+  id                  Int       @id @default(autoincrement())
+  date                DateTime
+  blNumber            String?   @map("bl_number") // ليتوافق مع خطأ bl_number المشهور
+  clientName          String    @map("client_name")
+  invoiceNumber       String?   @map("invoice_number")
+  customRelease       String?   @map("custom_release")
+  note                String?   @db.Text
 
-  jobId Int?
-  job   Job? @relation(fields: [jobId], references: [id], onDelete: SetNull)
+  // 🔴 الحقول الجديدة التي يطلبها الفرونت إند مباشرة في الجدول:
+  productName         String?   @map("product_name")
+  variety             String?   @map("variety")
+  grade               String?   @map("grade")
+  caliber             String?   @map("caliber")
+  packagesQtyKind     String?   @map("packages_qty_kind")
+  numberOfPackages    Int?      @map("number_of_packages") @default(0)
+  netWeight           Float?    @map("net_weight")
+  grossWeight         Float?    @map("gross_weight")
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  // باقي الحقول القديمة
+  shippingAgent       String?   @map("shipping_agent")
+  pol                 String?
+  pod                 String?
+  finalDestination    String?   @map("final_destination")
+  shippingDate        DateTime? @map("shipping_date")
+  dhlNumber           String?   @map("dhl_number")
+  numberOfContainers  Int       @default(0) @map("number_of_containers")
+  numberOfProducts    Int       @default(0) @map("number_of_products")
+  containerNumbers    Json?     @default("[]") @map("container_numbers")
+  attachments         Json?     @default("[]")
+
+  jobId               Int?      @map("job_id")
+  job                 Job?      @relation(fields: [jobId], references: [id], onDelete: SetNull)
+
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
 
   @@index([jobId])
   @@map("packing_lists")
