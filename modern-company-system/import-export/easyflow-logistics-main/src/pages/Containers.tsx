@@ -1,10 +1,9 @@
 import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
-import { useTranslation } from '../../node_modules/react-i18next';
+import { useTranslation } from 'react-i18next'; // ✅ تم إصلاح المسار لـ Vercel
 import { PageHeader } from '@/components/PageHeader';
 import { DeleteConfirmDialog } from '@/components/DeleteConfirmDialog';
 import {
-  getContainers, saveContainers, getProducts, generateId,
-  Container, ContainerProduct, formatDate
+  Container, ContainerProduct, formatDate, uploadFileToSupabase, generateId
 } from '@/data/store';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -15,7 +14,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Plus, Pencil, Trash2, Ship, MapPin, Package, Calendar, Anchor, Camera, FileText } from 'lucide-react';
 import { toast } from 'sonner';
-import { compressImage } from '@/utils/imageCompression';
 import { FileViewer } from '@/components/FileViewer';
 
 const statusColors: Record<string, string> = {
@@ -32,9 +30,17 @@ const statusIcons: Record<string, string> = {
   cleared: '🏁 ',
 };
 
+// تحديد رابط الباك إند ديناميكياً
+const BASE_URL = window.location.hostname === 'localhost' 
+  ? 'http://localhost:5000' 
+  : 'https://modern-system-backend.vercel.app';
+
 export default function Containers() {
   const { t } = useTranslation();
-  const products = useMemo(() => getProducts(), []);
+  const [products, setProducts] = useState<any[]>([]);
+  const [containers, setContainers] = useState<Container[]>([]);
+  const [loading, setLoading] = useState(true);
+
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [editing, setEditing] = useState<Container | null>(null);
@@ -42,16 +48,31 @@ export default function Containers() {
   const [viewingFile, setViewingFile] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // جلب كافة الحاويات والمنتجات من الباك إند السحابي مباشرة عند فتح الصفحة
+  const fetchAllData = async () => {
+    try {
+      setLoading(true);
+      const [containersRes, productsRes] = await Promise.all([
+        fetch(`${BASE_URL}/api/containers`).catch(() => null),
+        fetch(`${BASE_URL}/api/products`).catch(() => null)
+      ]);
 
-  const [containers, setContainers] = useState<Container[]>([]);
+      const containersData = containersRes && containersRes.ok ? await containersRes.json() : [];
+      const productsData = productsRes && productsRes.ok ? await productsRes.json() : [];
 
-useEffect(() => {
-  setContainers(getContainers());
-  const timer = setTimeout(() => {
-    setContainers(getContainers());
-  }, 600);
-  return () => clearTimeout(timer);
-}, []);
+      setContainers(containersData);
+      setProducts(productsData);
+    } catch (error) {
+      console.error('Error fetching dynamic cloud data:', error);
+      toast.error('Failed to sync containers from cloud server');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchAllData();
+  }, []);
 
   const emptyForm = {
     containerNumber: '', sourcePort: '', destinationPort: '',
@@ -70,9 +91,9 @@ useEffect(() => {
   const openEdit = (c: Container) => {
     setEditing(c);
     setForm({
-      containerNumber: c.containerNumber, sourcePort: c.sourcePort,
-      destinationPort: c.destinationPort, shippingDate: c.shippingDate,
-      arrivalDate: c.arrivalDate, status: c.status,
+      containerNumber: c.containerNumber, sourcePort: c.sourcePort || '',
+      destinationPort: c.destinationPort || '', shippingDate: c.shippingDate || '',
+      arrivalDate: c.arrivalDate || '', status: c.status,
       products: c.products ? [...c.products] : [],
       attachments: c.attachments ? [...c.attachments] : [],
     });
@@ -103,23 +124,27 @@ useEffect(() => {
         return;
       }
 
-      const isImage = file.type.startsWith('image/');
-      let url = '';
+      toast.loading("جاري رفع المستند إلى سوبابيز السحابي...", { id: "upload-container-doc" });
 
-      if (isImage) {
-        url = await compressImage(file);
+      const publicUrl = await uploadFileToSupabase(file, "attachments");
+
+      if (publicUrl) {
+        setForm(f => ({
+          ...f,
+          attachments: [
+            ...(f.attachments || []), 
+            { 
+              id: generateId(), 
+              url: publicUrl, 
+              description: file.name, 
+              createdAt: new Date().toISOString() 
+            }
+          ]
+        }));
+        toast.success("تم رفع المستند بنجاح! ✨", { id: "upload-container-doc" });
       } else {
-        url = await new Promise((resolve) => {
-          const reader = new FileReader();
-          reader.onload = (ev) => resolve(ev.target?.result as string);
-          reader.readAsDataURL(file);
-        });
+        toast.error("فشل رفع المستند، يرجى المحاولة مرة أخرى.", { id: "upload-container-doc" });
       }
-
-      setForm(f => ({
-        ...f,
-        attachments: [...(f.attachments || []), { id: generateId(), url, description: '', createdAt: new Date().toISOString() }]
-      }));
     }
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
@@ -131,137 +156,175 @@ useEffect(() => {
     }));
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!form.containerNumber.trim()) { toast.error('Please enter a container number.'); return; }
+    
     const parsedProducts = (form.products || []).map(p => ({
       ...p,
       quantity: Number(p.quantity) || 0,
-      packages: p.packages,
+      packages: Number(p.packages) || 0,
       netWeight: Number(p.netWeight) || 0,
       grossWeight: Number(p.grossWeight) || 0
     }));
-    const formDataToSave = { ...form, products: parsedProducts };
 
-    let updated: Container[];
-    if (editing) {
-      updated = containers.map(c => c.id === editing.id ? { ...c, ...formDataToSave } : c);
-      toast.success(`Container "${form.containerNumber}" updated! ✨`);
-    } else {
-      updated = [...containers, { id: generateId(), ...formDataToSave }];
-      toast.success(`Container "${form.containerNumber}" added! 🎉`);
+    const containerData = { ...form, products: parsedProducts };
+    const savingToast = toast.loading('Saving container details to cloud...');
+
+    try {
+      let response;
+      if (editing) {
+        response = await fetch(`${BASE_URL}/api/containers/${editing.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(containerData)
+        });
+      } else {
+        response = await fetch(`${BASE_URL}/api/containers`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(containerData)
+        });
+      }
+
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.error || 'Failed to save container on backend server');
+      }
+
+      toast.success(editing ? `Container "${form.containerNumber}" updated! ✨` : `Container "${form.containerNumber}" added! 🎉`, { id: savingToast });
+      setEditOpen(false);
+      fetchAllData(); // إعادة مزامنة الصفحة والبيانات تلقائيًا
+    } catch (error: any) {
+      console.error(error);
+      toast.error(error.message || "حدث خطأ أثناء مزامنة بيانات الحاوية.", { id: savingToast });
     }
-    setContainers(updated);
-    saveContainers(updated);
-    setEditOpen(false);
   };
 
-  const handleDelete = useCallback(() => {
+  const handleDelete = useCallback(async () => {
     if (!deleting) return;
-    const updated = containers.filter(c => c.id !== deleting.id);
-    setContainers(updated);
-    saveContainers(updated);
-    toast.success(`Container "${deleting.containerNumber}" removed.`);
-    setDeleting(null);
-  }, [deleting, containers]);
+    const deletingToast = toast.loading('Removing container from cloud...');
+    try {
+      const response = await fetch(`${BASE_URL}/api/containers/${deleting.id}`, {
+        method: 'DELETE'
+      });
+
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.error || 'Failed to delete container');
+      }
+
+      toast.success(`Container "${deleting.containerNumber}" removed.`, { id: deletingToast });
+      setDeleting(null);
+      setDeleteOpen(false);
+      fetchAllData(); // إعادة تحديث الصفحة فوراً
+    } catch (error: any) {
+      console.error(error);
+      toast.error(error.message || "فشل حذف الحاوية من السيرفر الخلفي.", { id: deletingToast });
+    }
+  }, [deleting]);
 
   return (
     <div className="notranslate" translate="no">
       <PageHeader title={t('Containers & Shipping', 'Containers & Shipping')} description={t('pages.containersDescRoot', 'Track your containers from port to port. Add products and manage shipping details.')}
         action={<Button onClick={openNew} size="lg"><Plus className="mr-2 h-4 w-4" /> {t('Add Container', 'Add Container')}</Button>} />
 
-      <div className="space-y-4">
-        {containers.map(c => (
-          <div key={c.id} className="rounded-xl bg-card p-5 card-shadow transition-shadow hover:card-shadow-hover">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex items-center gap-3">
-                <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-info/10">
-                  <Ship className="h-5 w-5 text-info" />
+      {loading ? (
+        <div className="text-center py-10 text-muted-foreground animate-pulse">Syncing shipping containers from server...</div>
+      ) : (
+        <div className="space-y-4">
+          {containers.map(c => (
+            <div key={c.id} className="rounded-xl bg-card p-5 card-shadow transition-shadow hover:card-shadow-hover border">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-info/10">
+                    <Ship className="h-5 w-5 text-info" />
+                  </div>
+                  <div>
+                    <h3 className="font-semibold text-foreground">{c.containerNumber}</h3>
+                    <Badge variant="outline" className={`mt-1 ${statusColors[c.status]}`}>
+                      {statusIcons[c.status]}{t(`status.${c.status}`, c.status)}
+                    </Badge>
+                  </div>
                 </div>
-                <div>
-                  <h3 className="font-semibold text-foreground">{c.containerNumber}</h3>
-                  <Badge variant="outline" className={`mt-1 ${statusColors[c.status]}`}>
-                    {statusIcons[c.status]}{t(`status.${c.status}`, c.status)}
-                  </Badge>
+                <div className="flex gap-1">
+                  <Button variant="ghost" size="sm" onClick={() => openEdit(c)}><Pencil className="h-3.5 w-3.5" /></Button>
+                  <Button variant="ghost" size="sm" className="text-destructive" onClick={() => { setDeleting(c); setDeleteOpen(true); }}><Trash2 className="h-3.5 w-3.5" /></Button>
                 </div>
               </div>
-              <div className="flex gap-1">
-                <Button variant="ghost" size="sm" onClick={() => openEdit(c)}><Pencil className="h-3.5 w-3.5" /></Button>
-                <Button variant="ghost" size="sm" className="text-destructive" onClick={() => { setDeleting(c); setDeleteOpen(true); }}><Trash2 className="h-3.5 w-3.5" /></Button>
-              </div>
-            </div>
 
-            <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              <div className="flex items-center gap-2 text-sm">
-                <Anchor className="h-4 w-4 text-muted-foreground" />
-                <div><p className="text-xs text-muted-foreground">{t('From', 'From')}</p><p className="font-medium text-foreground">{c.sourcePort || '—'}</p></div>
+              <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                <div className="flex items-center gap-2 text-sm">
+                  <Anchor className="h-4 w-4 text-muted-foreground" />
+                  <div><p className="text-xs text-muted-foreground">{t('From', 'From')}</p><p className="font-medium text-foreground">{c.sourcePort || '—'}</p></div>
+                </div>
+                <div className="flex items-center gap-2 text-sm">
+                  <MapPin className="h-4 w-4 text-muted-foreground" />
+                  <div><p className="text-xs text-muted-foreground">{t('To', 'To')}</p><p className="font-medium text-foreground">{c.destinationPort || '—'}</p></div>
+                </div>
+                <div className="flex items-center gap-2 text-sm">
+                  <Calendar className="h-4 w-4 text-muted-foreground" />
+                  <div><p className="text-xs text-muted-foreground">{t('Shipped', 'Shipped')}</p><p className="font-medium text-foreground">{c.shippingDate ? formatDate(c.shippingDate) : '—'}</p></div>
+                </div>
+                <div className="flex items-center gap-2 text-sm">
+                  <Calendar className="h-4 w-4 text-muted-foreground" />
+                  <div><p className="text-xs text-muted-foreground">Arrival (Est.)</p><p className="font-medium text-foreground">{c.arrivalDate ? formatDate(c.arrivalDate) : '—'}</p></div>
+                </div>
               </div>
-              <div className="flex items-center gap-2 text-sm">
-                <MapPin className="h-4 w-4 text-muted-foreground" />
-                <div><p className="text-xs text-muted-foreground">{t('To', 'To')}</p><p className="font-medium text-foreground">{c.destinationPort || '—'}</p></div>
-              </div>
-              <div className="flex items-center gap-2 text-sm">
-                <Calendar className="h-4 w-4 text-muted-foreground" />
-                <div><p className="text-xs text-muted-foreground">{t('Shipped', 'Shipped')}</p><p className="font-medium text-foreground">{c.shippingDate ? formatDate(c.shippingDate) : '—'}</p></div>
-              </div>
-              <div className="flex items-center gap-2 text-sm">
-                <Calendar className="h-4 w-4 text-muted-foreground" />
-                <div><p className="text-xs text-muted-foreground">Arrival (Est.)</p><p className="font-medium text-foreground">{c.arrivalDate ? formatDate(c.arrivalDate) : '—'}</p></div>
-              </div>
-            </div>
 
-            {(c.products || []).length > 0 && (
-              <div className="mt-4 rounded-lg bg-muted/40 p-3">
-                <p className="text-xs font-medium text-muted-foreground mb-2">{t('Products in this container', 'Products in this container')}</p>
-                <div className="space-y-1.5">
-                  {(c.products || []).map((cp, i) => {
-                    const product = products.find(p => p.id === cp.productId);
-                    return (
-                      <div key={i} className="flex flex-col gap-1 text-sm border-b pb-1 last:border-0 last:pb-0">
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2">
-                            <Package className="h-3.5 w-3.5 text-primary" />
-                            <span className="text-foreground">{product?.name || 'Unknown'}</span>
+              {(c.products || []).length > 0 && (
+                <div className="mt-4 rounded-lg bg-muted/40 p-3">
+                  <p className="text-xs font-medium text-muted-foreground mb-2">{t('Products in this container', 'Products in this container')}</p>
+                  <div className="space-y-1.5">
+                    {(c.products || []).map((cp, i) => {
+                      const product = products.find(p => p.id === cp.productId);
+                      return (
+                        <div key={i} className="flex flex-col gap-1 text-sm border-b pb-1 last:border-0 last:pb-0">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <Package className="h-3.5 w-3.5 text-primary" />
+                              <span className="text-foreground">{product?.name || 'Unknown'}</span>
+                            </div>
+                            <span className="text-muted-foreground">Qty: {cp.quantity} · {cp.packages} pkgs</span>
                           </div>
-                          <span className="text-muted-foreground">Qty: {cp.quantity} · {cp.packages} pkgs</span>
+                          <div className="flex items-center justify-between text-xs text-muted-foreground pl-5">
+                            <span>Net/Gross: {[cp.netWeight, cp.grossWeight].filter(Boolean).join('/') || '—'}</span>
+                            <span>Type: {cp.packageType || '—'}</span>
+                          </div>
                         </div>
-                        <div className="flex items-center justify-between text-xs text-muted-foreground pl-5">
-                          <span>Net/Gross: {[cp.netWeight, cp.grossWeight].filter(Boolean).join('/') || '—'}</span>
-                          <span>Type: {cp.packageType || '—'}</span>
-                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {c.attachments && c.attachments.length > 0 && (
+                <div className="mt-4">
+                  <span className="font-semibold text-xs text-muted-foreground block mb-2 uppercase">Attachments</span>
+                  <div className="flex gap-2 flex-wrap">
+                    {c.attachments.map((att) => (
+                      <div
+                        key={att.id}
+                        onClick={() => setViewingFile(att.url)}
+                        className="flex items-center gap-1.5 border rounded-md px-2.5 py-1.5 text-xs cursor-pointer hover:bg-accent transition-colors"
+                      >
+                        <FileText className="h-3.5 w-3.5 text-primary" />
+                        {att.description || 'Document'}
                       </div>
-                    );
-                  })}
+                    ))}
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
+            </div>
+          ))}
+        </div>
+      )}
 
-            {c.attachments && c.attachments.length > 0 && (
-              <div className="mt-4">
-                <span className="font-semibold text-xs text-muted-foreground block mb-2 uppercase">Attachments</span>
-                <div className="flex gap-2 flex-wrap">
-                  {c.attachments.map((att) => (
-                    <div
-                      key={att.id}
-                      onClick={() => setViewingFile(att.url)}
-                      className="flex items-center gap-1.5 border rounded-md px-2.5 py-1.5 text-xs cursor-pointer hover:bg-accent transition-colors"
-                    >
-                      <FileText className="h-3.5 w-3.5 text-primary" />
-                      {att.description || 'Document'}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        ))}
-
-        {containers.length === 0 && (
-          <div className="rounded-xl border-2 border-dashed p-12 text-center">
-            <Ship className="mx-auto h-10 w-10 text-muted-foreground/50" />
-            <p className="mt-3 text-muted-foreground">No containers tracked yet. Add your first container!</p>
-          </div>
-        )}
-      </div>
+      {!loading && containers.length === 0 && (
+        <div className="rounded-xl border-2 border-dashed p-12 text-center">
+          <Ship className="mx-auto h-10 w-10 text-muted-foreground/50" />
+          <p className="mt-3 text-muted-foreground">No containers tracked yet. Add your first container!</p>
+        </div>
+      )}
 
       {/* Create/Edit Dialog */}
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
@@ -344,7 +407,7 @@ useEffect(() => {
               <div className="grid grid-cols-1 gap-3">
                 {(form.attachments || []).map((att, i) => (
                   <div key={att.id} className="flex gap-2 items-center border rounded-lg p-2 bg-muted/20">
-                    {att.url.startsWith('data:image/') ? (
+                    {att.url.startsWith('data:image/') || att.url.match(/\.(jpeg|jpg|gif|png|webp)/i) ? (
                       <img src={att.url} className="w-10 h-10 rounded object-cover" />
                     ) : (
                       <div className="w-10 h-10 rounded bg-muted flex flex-shrink-0 items-center justify-center">

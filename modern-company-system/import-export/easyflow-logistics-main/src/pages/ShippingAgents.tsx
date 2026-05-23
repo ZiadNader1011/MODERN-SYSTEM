@@ -1,10 +1,10 @@
 import { useState, useCallback, useMemo, useEffect } from 'react';
-import { useTranslation } from '../../node_modules/react-i18next';
+import { useTranslation } from 'react-i18next'; // ✅ تم إصلاح المسار لـ Vercel
 import { useNavigate } from 'react-router-dom';
 import { PageHeader } from '@/components/PageHeader';
 import { DeleteConfirmDialog } from '@/components/DeleteConfirmDialog';
 import { FileViewer } from '@/components/FileViewer';
-import { getShippingAgents, saveShippingAgents, getShippingAgentRecords, generateId, ShippingAgent, getTransactions, formatCurrency } from '@/data/store';
+import { ShippingAgent, formatCurrency } from '@/data/store';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -12,22 +12,22 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Plus, Pencil, Trash2, Ship, Globe, Mail, User, Phone, Receipt, Paperclip } from 'lucide-react';
 import { toast } from 'sonner';
+import { supabase } from '@/utils/supabaseClient'; // ✅ استدعاء عميل Supabase الموحد والآمن في مشروعك
+
+// تحديد رابط الباك إند ديناميكياً
+const BASE_URL = window.location.hostname === 'localhost' 
+  ? 'http://localhost:5000' 
+  : 'https://modern-system-backend.vercel.app';
 
 export default function ShippingAgents() {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const records = useMemo(() => getShippingAgentRecords(), []);
-  const transactions = useMemo(() => getTransactions(), []);
-  const [agents, setAgents] = useState<ShippingAgent[]>([]);
 
-useEffect(() => {
-  setAgents(getShippingAgents());
-  const timer = setTimeout(() => {
-    setAgents(getShippingAgents());
-  }, 600);
-  return () => clearTimeout(timer);
-}, []);
-  
+  // حالات البيانات (States) المجلوبة من السيرفر الخلفي
+  const [agents, setAgents] = useState<ShippingAgent[]>([]);
+  const [records, setRecords] = useState<any[]>([]);
+  const [transactions, setTransactions] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
 
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -35,16 +35,58 @@ useEffect(() => {
   const [deleting, setDeleting] = useState<ShippingAgent | null>(null);
   const [form, setForm] = useState({ name: '', address: '', telephone: '', personalNumber: '', email: '', attachmentUrl: '' });
   const [viewingFile, setViewingFile] = useState<string | null>(null);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
+// دالة جلب كافة البيانات المطلوبة للحسابات من السيرفر مباشرة
+  const fetchAllData = async () => {
+    try {
+      setLoading(true);
+      
+      // نضع مسارات fetch داخل Promise.all بشكل طبيعي
+      const [agentsRes, recordsRes, transRes] = await Promise.all([
+        fetch(`${BASE_URL}/api/shipping-agents`).catch(() => null),
+        fetch(`${BASE_URL}/api/shipping-agent-records`).catch(() => null),
+        fetch(`${BASE_URL}/api/transactions`).catch(() => null)
+      ]);
+
+      // نقرأ البيانات بأمان بعد التأكد من أن الاستجابة ناجحة وليست null
+      const agentsData = agentsRes && agentsRes.ok ? await agentsRes.json() : [];
+      const recordsData = recordsRes && recordsRes.ok ? await recordsRes.json() : [];
+      const transData = transRes && transRes.ok ? await transRes.json() : [];
+
+      setAgents(agentsData);
+      setRecords(recordsData);
+      setTransactions(transData);
+    } catch (error) {
+      console.error('Error fetching dynamic data:', error);
+      toast.error('Failed to sync data from cloud server');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchAllData();
+  }, []);
+  
   const openNew = () => {
     setEditing(null);
+    setSelectedFile(null);
     setForm({ name: '', address: '', telephone: '', personalNumber: '', email: '', attachmentUrl: '' });
     setEditOpen(true);
   };
 
   const openEdit = (a: ShippingAgent) => {
     setEditing(a);
-    setForm({ name: a.name, address: a.address || '', telephone: a.telephone || '', personalNumber: a.personalNumber || '', email: a.email || '', attachmentUrl: a.attachmentUrl || '' });
+    setSelectedFile(null);
+    setForm({ 
+      name: a.name, 
+      address: a.address || '', 
+      telephone: a.telephone || '', 
+      personalNumber: a.personalNumber || '', 
+      email: a.email || '', 
+      attachmentUrl: a.attachmentUrl || '' 
+    });
     setEditOpen(true);
   };
 
@@ -58,128 +100,200 @@ useEffect(() => {
       return;
     }
 
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      if (event.target?.result) {
-        setForm(f => ({ ...f, attachmentUrl: event.target!.result as string }));
-        toast.success('File attached to form.');
-      }
-    };
-    reader.readAsDataURL(file);
+    setSelectedFile(file);
+    setForm(f => ({ ...f, attachmentUrl: file.name }));
+    toast.success('File attached to form.');
   };
 
-  const handleSave = () => {
-    if (!form.name.trim()) { toast.error('Please enter a name.'); return; }
-    let updated: ShippingAgent[];
-    if (editing) {
-      updated = agents.map(a => a.id === editing.id ? { ...a, ...form } : a);
-      toast.success(`"${form.name}" has been updated!`);
-    } else {
-      updated = [...agents, { id: generateId(), ...form }];
-      toast.success(`"${form.name}" has been added!`);
+  const handleSave = async () => {
+    if (!form.name.trim()) { 
+      toast.error('Please enter a name.'); 
+      return; 
     }
-    setAgents(updated);
-    saveShippingAgents(updated);
-    setEditOpen(false);
+
+    const savingToast = toast.loading('Saving cloud data...');
+
+    try {
+      let finalAttachmentUrl = form.attachmentUrl;
+
+      // 1️⃣ رفع الملف إلى سوبابيز فقط إذا قام المستخدم باختيار ملف جديد من جهازه
+      if (selectedFile) {
+        const fileExt = selectedFile.name.split('.').pop();
+        const fileName = `${Date.now()}-${Math.random().toString(36).substring(2)}.${fileExt}`;
+        const filePath = `shipping-agents/${fileName}`;
+
+        const { data, error } = await supabase.storage
+          .from('attachments')
+          .upload(filePath, selectedFile, {
+            cacheControl: '3600',
+            upsert: false
+          });
+
+        if (error) throw new Error(`Supabase Storage Error: ${error.message}`);
+
+        const { data: publicUrlData } = supabase.storage
+          .from('attachments')
+          .getPublicUrl(filePath);
+
+        finalAttachmentUrl = publicUrlData.publicUrl;
+      }
+
+      // 2️⃣ تجهيز البيانات المطابقة تماماً لما يتوقعه السيرفر
+      const agentData = {
+        name: form.name.trim(),
+        address: form.address ? form.address.trim() : "",
+        telephone: form.telephone ? form.telephone.trim() : "",
+        personalNumber: form.personalNumber ? form.personalNumber.trim() : "",
+        email: form.email ? form.email.trim() : "",
+        attachmentUrl: finalAttachmentUrl || ""
+      };
+      
+      let response;
+      if (editing) {
+        response = await fetch(`${BASE_URL}/api/shipping-agents/${editing.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(agentData)
+        });
+      } else {
+        response = await fetch(`${BASE_URL}/api/shipping-agents`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(agentData)
+        });
+      }
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || errorData.message || 'فشلت عملية حفظ البيانات على السيرفر الخلفي.');
+      }
+
+      toast.success(editing ? `"${form.name}" has been updated!` : `"${form.name}" has been added!`, { id: savingToast });
+
+      setEditOpen(false);
+      setSelectedFile(null);
+      fetchAllData(); // 🔄 إعادة تحديث كل البيانات من السيرفر لضمان المزامنة بنسبة 100%
+    } catch (error: any) {
+      console.error(error);
+      toast.error(error.message || "حدث خطأ أثناء حفظ ومزامنة البيانات.", { id: savingToast });
+    }
   };
 
-  const handleDelete = useCallback(() => {
+  const handleDelete = useCallback(async () => {
     if (!deleting) return;
-    const updated = agents.filter(a => a.id !== deleting.id);
-    setAgents(updated);
-    saveShippingAgents(updated);
-    toast.success(`"${deleting.name}" has been removed.`);
-    setDeleting(null);
-  }, [deleting, agents]);
+    const deletingToast = toast.loading('Removing shipping agent...');
+    try {
+      const response = await fetch(`${BASE_URL}/api/shipping-agents/${deleting.id}`, {
+        method: 'DELETE'
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to delete agent');
+      }
+
+      toast.success(`"${deleting.name}" has been removed.`, { id: deletingToast });
+      setDeleting(null);
+      setDeleteOpen(false);
+      fetchAllData(); // 🔄 تحديث القائمة فوراً
+    } catch (error: any) {
+      console.error(error);
+      toast.error(error.message || "فشل حذف الوكيل من الخادم.", { id: deletingToast });
+    }
+  }, [deleting]);
 
   return (
     <div>
       <PageHeader title={t('Shipping Agents', 'Shipping Agents')} description={t('pages.shippingAgentsDesc', 'Manage your shipping agents and their ledgers.')}
         action={<Button onClick={openNew} size="lg"><Plus className="mr-2 h-4 w-4" /> {t('Add Shipping Agent', 'Add Shipping Agent')}</Button>} />
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {agents.map(a => {
-          const agentRecords = records.filter(r => r.agentId === a.id);
-          
-          let totalEgp = 0, totalEuro = 0, totalUsd = 0;
-          agentRecords.forEach(r => {
-            if (r.costEgp) totalEgp += r.costEgp;
-            if (r.costEuro) totalEuro += r.costEuro;
-            if (r.costUsd) totalUsd += r.costUsd;
-          });
+      {loading ? (
+        <div className="text-center py-10 text-muted-foreground animate-pulse">Syncing shipping data from cloud server...</div>
+      ) : (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {agents.map(a => {
+            const agentRecords = records.filter(r => r.agentId === a.id || r.agent_id === a.id);
+            
+            let totalEgp = 0, totalEuro = 0, totalUsd = 0;
+            agentRecords.forEach(r => {
+              if (r.costEgp || r.cost_egp) totalEgp += (r.costEgp || r.cost_egp);
+              if (r.costEuro || r.cost_euro) totalEuro += (r.costEuro || r.cost_euro);
+              if (r.costUsd || r.cost_usd) totalUsd += (r.costUsd || r.cost_usd);
+            });
 
-          let paidEgp = 0, paidEuro = 0, paidUsd = 0;
-          transactions.filter(t => t.relatedId === a.id).forEach(t => {
-            if (t.type === 'outgoing') {
-              if (t.currency === 'EGP') paidEgp += t.amount;
-              else if (t.currency === 'EUR') paidEuro += t.amount;
-              else if (t.currency === 'USD') paidUsd += t.amount;
-            } else if (t.type === 'incoming') {
-              if (t.currency === 'EGP') paidEgp -= t.amount;
-              else if (t.currency === 'EUR') paidEuro -= t.amount;
-              else if (t.currency === 'USD') paidUsd -= t.amount;
-            }
-          });
+            let paidEgp = 0, paidEuro = 0, paidUsd = 0;
+            transactions.filter(t => t.relatedId === a.id || t.related_id === a.id).forEach(t => {
+              if (t.type === 'outgoing') {
+                if (t.currency === 'EGP') paidEgp += t.amount;
+                else if (t.currency === 'EUR') paidEuro += t.amount;
+                else if (t.currency === 'USD') paidUsd += t.amount;
+              } else if (t.type === 'incoming') {
+                if (t.currency === 'EGP') paidEgp -= t.amount;
+                else if (t.currency === 'EUR') paidEuro -= t.amount;
+                else if (t.currency === 'USD') paidUsd -= t.amount;
+              }
+            });
 
-          const remainingEgp = totalEgp - paidEgp;
-          const remainingEuro = totalEuro - paidEuro;
-          const remainingUsd = totalUsd - paidUsd;
+            const remainingEgp = totalEgp - paidEgp;
+            const remainingEuro = totalEuro - paidEuro;
+            const remainingUsd = totalUsd - paidUsd;
 
-          return (
-            <div key={a.id} className="rounded-xl bg-card p-5 shadow-sm border transition-shadow hover:shadow-md flex flex-col justify-between">
-              <div>
-                <div className="flex items-start justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-500/10 text-blue-500">
-                      <Ship className="h-5 w-5" />
+            return (
+              <div key={a.id} className="rounded-xl bg-card p-5 shadow-sm border transition-shadow hover:shadow-md flex flex-col justify-between">
+                <div>
+                  <div className="flex items-start justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-500/10 text-blue-500">
+                        <Ship className="h-5 w-5" />
+                      </div>
+                      <div>
+                        <h3 className="font-semibold text-foreground flex items-center gap-2">
+                          {a.name}
+                          {a.attachmentUrl && (
+                            <button onClick={() => setViewingFile(a.attachmentUrl!)} title="View Agent Document" className="text-primary hover:bg-primary/10 p-1 rounded-md transition-colors">
+                              <Paperclip className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                        </h3>
+                      </div>
                     </div>
-                    <div>
-                      <h3 className="font-semibold text-foreground flex items-center gap-2">
-                        {a.name}
-                        {a.attachmentUrl && (
-                          <button onClick={() => setViewingFile(a.attachmentUrl!)} title="View Agent Document" className="text-primary hover:bg-primary/10 p-1 rounded-md transition-colors">
-                            <Paperclip className="h-3.5 w-3.5" />
-                          </button>
-                        )}
-                      </h3>
+                    <div className="flex gap-1">
+                      <button onClick={() => navigate(`/shipping-agents/${a.id}`)} className="rounded-md p-1.5 hover:bg-accent" title="Detailed Ledger"><Receipt className="h-4 w-4 text-primary" /></button>
+                      <button onClick={() => openEdit(a)} className="rounded-md p-1.5 hover:bg-accent"><Pencil className="h-3.5 w-3.5 text-muted-foreground" /></button>
+                      <button onClick={() => { setDeleting(a); setDeleteOpen(true); }} className="rounded-md p-1.5 hover:bg-destructive/10"><Trash2 className="h-3.5 w-3.5 text-destructive" /></button>
                     </div>
                   </div>
-                  <div className="flex gap-1">
-                    <button onClick={() => navigate(`/shipping-agents/${a.id}`)} className="rounded-md p-1.5 hover:bg-accent" title="Detailed Ledger"><Receipt className="h-4 w-4 text-primary" /></button>
-                    <button onClick={() => openEdit(a)} className="rounded-md p-1.5 hover:bg-accent"><Pencil className="h-3.5 w-3.5 text-muted-foreground" /></button>
-                    <button onClick={() => { setDeleting(a); setDeleteOpen(true); }} className="rounded-md p-1.5 hover:bg-destructive/10"><Trash2 className="h-3.5 w-3.5 text-destructive" /></button>
+                  <div className="mt-3 space-y-1 text-sm text-muted-foreground">
+                    {a.address && <div className="flex items-center gap-1.5"><Globe className="h-3 w-3" />{a.address}</div>}
+                    {a.email && <div className="flex items-center gap-1.5"><Mail className="h-3 w-3" />{a.email}</div>}
+                    {a.telephone && <div className="flex items-center gap-1.5" dir="ltr"><Phone className="h-3 w-3 shrink-0" /><span className="truncate">{a.telephone}</span></div>}
+                    {a.personalNumber && <div className="flex items-center gap-1.5" dir="ltr"><User className="h-3 w-3 shrink-0" /><span className="truncate">{a.personalNumber}</span></div>}
                   </div>
                 </div>
-                <div className="mt-3 space-y-1 text-sm text-muted-foreground">
-                  {a.address && <div className="flex items-center gap-1.5"><Globe className="h-3 w-3" />{a.address}</div>}
-                  {a.email && <div className="flex items-center gap-1.5"><Mail className="h-3 w-3" />{a.email}</div>}
-                  {a.telephone && <div className="flex items-center gap-1.5" dir="ltr"><Phone className="h-3 w-3 shrink-0" /><span className="truncate">{a.telephone}</span></div>}
-                  {a.personalNumber && <div className="flex items-center gap-1.5" dir="ltr"><User className="h-3 w-3 shrink-0" /><span className="truncate">{a.personalNumber}</span></div>}
+
+                {/* Stats */}
+                <div className="mt-4 pt-3 border-t space-y-2">
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="flex items-center gap-1.5 text-muted-foreground">Records</span>
+                    <Badge variant="outline" className="text-xs">{agentRecords.length}</Badge>
+                  </div>
+                  
+                  {(remainingUsd !== 0 || remainingEuro !== 0 || remainingEgp !== 0) && (
+                    <div className="pt-2 mt-2 border-t text-xs space-y-1">
+                      <div className="text-muted-foreground mb-1 font-medium">Remaining Debt:</div>
+                      {remainingUsd !== 0 && <div className="flex justify-between"><span>USD:</span> <span className={`font-bold ${remainingUsd > 0 ? 'text-destructive' : 'text-success'}`}>{formatCurrency(remainingUsd, 'USD')}</span></div>}
+                      {remainingEuro !== 0 && <div className="flex justify-between"><span>EUR:</span> <span className={`font-bold ${remainingEuro > 0 ? 'text-destructive' : 'text-success'}`}>{formatCurrency(remainingEuro, 'EUR')}</span></div>}
+                      {remainingEgp !== 0 && <div className="flex justify-between"><span>EGP:</span> <span className={`font-bold ${remainingEgp > 0 ? 'text-destructive' : 'text-success'}`}>{formatCurrency(remainingEgp, 'EGP')}</span></div>}
+                    </div>
+                  )}
                 </div>
               </div>
+            );
+          })}
+        </div>
+      )}
 
-              {/* Stats */}
-              <div className="mt-4 pt-3 border-t space-y-2">
-                <div className="flex items-center justify-between text-sm">
-                  <span className="flex items-center gap-1.5 text-muted-foreground">Records</span>
-                  <Badge variant="outline" className="text-xs">{agentRecords.length}</Badge>
-                </div>
-                
-                {(remainingUsd !== 0 || remainingEuro !== 0 || remainingEgp !== 0) && (
-                  <div className="pt-2 mt-2 border-t text-xs space-y-1">
-                    <div className="text-muted-foreground mb-1 font-medium">Remaining Debt:</div>
-                    {remainingUsd !== 0 && <div className="flex justify-between"><span>USD:</span> <span className={`font-bold ${remainingUsd > 0 ? 'text-destructive' : 'text-success'}`}>{formatCurrency(remainingUsd, 'USD')}</span></div>}
-                    {remainingEuro !== 0 && <div className="flex justify-between"><span>EUR:</span> <span className={`font-bold ${remainingEuro > 0 ? 'text-destructive' : 'text-success'}`}>{formatCurrency(remainingEuro, 'EUR')}</span></div>}
-                    {remainingEgp !== 0 && <div className="flex justify-between"><span>EGP:</span> <span className={`font-bold ${remainingEgp > 0 ? 'text-destructive' : 'text-success'}`}>{formatCurrency(remainingEgp, 'EGP')}</span></div>}
-                  </div>
-                )}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
-      {agents.length === 0 && (
+      {!loading && agents.length === 0 && (
         <div className="rounded-xl border-2 border-dashed p-12 text-center">
           <Ship className="mx-auto h-10 w-10 text-muted-foreground/50" />
           <p className="mt-3 text-muted-foreground">{t('No shipping agents yet.', 'No shipping agents yet.')}</p>
@@ -212,7 +326,6 @@ useEffect(() => {
 
       <DeleteConfirmDialog open={deleteOpen} onOpenChange={setDeleteOpen} onConfirm={handleDelete} itemName={deleting?.name || ''} />
 
-      {/* File Viewer Component */}
       <FileViewer fileUrl={viewingFile} onClose={() => setViewingFile(null)} />
     </div>
   );

@@ -76,6 +76,10 @@ export const updateTransaction = async (req, res) => {
         const numericId = parseInt(req.params.id);
         const data = req.body;
 
+        if (isNaN(numericId)) {
+            return res.status(400).json({ error: "معرف المعاملة غير صحيح" });
+        }
+
         const existing = await prisma.transaction.findUnique({ where: { id: numericId } });
         if (!existing) return res.status(404).json({ error: "Transaction not found" });
 
@@ -88,14 +92,18 @@ export const updateTransaction = async (req, res) => {
                 currency: data.currency ?? undefined,
                 date: data.date ? new Date(data.date) : undefined,
                 relatedId: data.relatedId === 'none' ? null : (data.relatedId ? String(data.relatedId) : undefined),
-                
                 bank: data.bank !== undefined ? data.bank : undefined,
                 blNumber: data.blNumber !== undefined ? data.blNumber : undefined,
                 invoiceNumber: data.invoiceNumber !== undefined ? data.invoiceNumber : undefined,
             }
         });
 
-        return res.status(200).json(updated);
+        // 🔥 التصحيح هنا: تحويل الـ id إلى String لضمان تحديث نفس العنصر في الكاش بدلاً من مضاعفته
+        return res.status(200).json({ 
+            ...updated, 
+            id: String(updated.id),
+            amount: Number(updated.amount)
+        });
     } catch (error) {
         console.error("❌ Update Error:", error);
         return res.status(400).json({ error: "Update failed" });

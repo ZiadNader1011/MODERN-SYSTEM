@@ -1,8 +1,8 @@
 import { useState, useRef, useMemo, useEffect } from 'react';
-import { useTranslation } from '../../node_modules/react-i18next';
+import { useTranslation } from 'react-i18next'; 
 import { PageHeader } from '@/components/PageHeader';
 import { DeleteConfirmDialog } from '@/components/DeleteConfirmDialog';
-import { getPackingLists, savePackingLists, generateId, StandalonePackingList, PackingListProduct, formatDate, getContainers } from '@/data/store';
+import { generateId, StandalonePackingList, PackingListProduct, formatDate, getContainers, uploadFileToSupabase } from '@/data/store';
 import { compressImage } from '@/utils/imageCompression';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -14,6 +14,7 @@ import { FileViewer } from '@/components/FileViewer';
 import { PackingListPrintForm } from '@/components/PackingListPrintForm';
 import { Plus, Pencil, Trash2, FileText, Calendar, Camera, PackageSearch, FileBox, Printer } from 'lucide-react';
 import { toast } from 'sonner';
+import { supabase } from '@/utils/supabaseClient'; // 🔗 استيراد عميل سوبابيز
 
 export default function PackingLists() {
   const { t } = useTranslation();
@@ -25,16 +26,64 @@ export default function PackingLists() {
   const [printing, setPrinting] = useState<StandalonePackingList | null>(null);
   const [printOpen, setPrintOpen] = useState(false);
   
-
   const [packingLists, setPackingLists] = useState<StandalonePackingList[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
 
-useEffect(() => {
-  setPackingLists(getPackingLists());
-  const timer = setTimeout(() => {
-    setPackingLists(getPackingLists());
-  }, 600);
-  return () => clearTimeout(timer);
-}, []);
+  // 1️⃣ جلب البيانات مباشرة من جدول سوبابيز عند فتح الصفحة
+  const fetchPackingLists = async () => {
+    try {
+      setIsLoading(true);
+      const { data, error } = await supabase
+        .from('packing_lists') // تأكدي من أن اسم الجدول في سوبابيز مطابق تماماً
+        .select('*')
+        .order('date', { ascending: false });
+
+      if (error) throw error;
+
+      // تحويل أسماء الأعمدة لتطابق الكود (CamelCase)
+      const formattedData = (data || []).map((row: any) => ({
+        id: row.id,
+        date: row.date,
+        blNumber: row.bl_number,
+        containerNumber: row.container_number,
+        clientName: row.client_name,
+        invoiceNumber: row.invoice_number,
+        customRelease: row.custom_release,
+        note: row.note,
+        dhlNumber: row.dhl_number,
+        productName: row.product_name,
+        variety: row.variety,
+        grade: row.grade,
+        caliber: row.caliber,
+        packagesQtyKind: row.packages_qty_kind,
+        numberOfPackages: row.number_of_packages,
+        netWeight: row.net_weight,
+        grossWeight: row.gross_weight,
+        shippingAgent: row.shipping_agent,
+        pol: row.pol,
+        pod: row.pod,
+        finalDestination: row.final_destination,
+        shippingDate: row.shipping_date,
+        numberOfContainers: row.number_of_containers,
+        containerNumbers: row.container_numbers || [],
+        numberOfProducts: row.number_of_products,
+        products: row.products || [],
+        attachments: row.attachments || []
+      }));
+
+      setPackingLists(formattedData);
+    } catch (error: any) {
+      console.error('Error fetching packing lists:', error);
+      toast.error('Failed to load packing lists from cloud');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchPackingLists();
+  }, []);
+
   const [viewingFile, setViewingFile] = useState<string | null>(null);
   const containersList = useMemo(() => getContainers(), []);
 
@@ -116,24 +165,41 @@ useEffect(() => {
         return;
       }
       
+      toast.loading("جاري رفع المستند إلى السحابة...", { id: "upload-packing-doc" });
+
+      let fileToUpload = file;
       const isImage = file.type.startsWith('image/');
-      let url = '';
       
       if (isImage) {
-        url = await compressImage(file);
-      } else {
-        // Fallback for PDF, Excel, etc (note: base64 can be large)
-        url = await new Promise((resolve) => {
-          const reader = new FileReader();
-          reader.onload = (ev) => resolve(ev.target?.result as string);
-          reader.readAsDataURL(file);
-        });
+        try {
+          const compressedBase64 = await compressImage(file);
+          const res = await fetch(compressedBase64);
+          const blob = await res.blob();
+          fileToUpload = new File([blob], file.name, { type: file.type });
+        } catch (error) {
+          console.error("Image compression failed, uploading original.", error);
+        }
       }
 
-      setForm(f => ({
-        ...f,
-        attachments: [...f.attachments, { id: generateId(), url, description: '', createdAt: new Date().toISOString() }]
-      }));
+      const publicUrl = await uploadFileToSupabase(fileToUpload, "attachments");
+
+      if (publicUrl) {
+        setForm(f => ({
+          ...f,
+          attachments: [
+            ...(f.attachments || []), 
+            { 
+              id: generateId(), 
+              url: publicUrl, 
+              description: file.name, 
+              createdAt: new Date().toISOString() 
+            }
+          ]
+        }));
+        toast.success("تم رفع المستند بنجاح! ✨", { id: "upload-packing-doc" });
+      } else {
+        toast.error("فشل رفع المستند، يرجى المحاولة مرة أخرى.", { id: "upload-packing-doc" });
+      }
     }
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
@@ -145,40 +211,78 @@ useEffect(() => {
     }));
   };
 
-  const handleSave = () => {
-    const plData: StandalonePackingList = {
-      ...form,
-      numberOfContainers: Number(form.numberOfContainers) || 0,
-      containerNumbers: form.containerNumbers.slice(0, Number(form.numberOfContainers) || 0),
-      numberOfProducts: Number(form.numberOfProducts) || 0,
+  // 2️⃣ دالة الحفظ المعدلة لترسل البيانات مباشرة لقاعدة بيانات سوبابيز
+  const handleSave = async () => {
+    const recordId = editing ? editing.id : generateId();
+
+    const dbData = {
+      id: recordId,
+      date: form.date,
+      bl_number: form.blNumber,
+      container_number: form.containerNumber,
+      client_name: form.clientName,
+      invoice_number: form.invoiceNumber,
+      custom_release: form.customRelease,
+      note: form.note,
+      dhl_number: form.dhlNumber,
+      product_name: form.productName,
+      variety: form.variety,
+      grade: form.grade,
+      caliber: form.caliber,
+      packages_qty_kind: form.packagesQtyKind,
+      number_of_packages: form.numberOfPackages,
+      net_weight: form.netWeight,
+      gross_weight: form.grossWeight,
+      shipping_agent: form.shippingAgent,
+      pol: form.pol,
+      pod: form.pod,
+      final_destination: form.finalDestination,
+      shipping_date: form.shippingDate,
+      number_of_containers: Number(form.numberOfContainers) || 0,
+      container_numbers: form.containerNumbers.slice(0, Number(form.numberOfContainers) || 0),
+      number_of_products: Number(form.numberOfProducts) || 0,
       products: form.products.slice(0, Number(form.numberOfProducts) || 0),
-      id: editing ? editing.id : generateId(),
+      attachments: form.attachments
     };
-    
-    let updated;
-    if (editing) {
-      updated = packingLists.map(p => p.id === editing.id ? plData : p);
-      toast.success('Packing List updated successfully');
-    } else {
-      updated = [...packingLists, plData];
-      toast.success('Packing List created successfully');
+
+    const savingToast = toast.loading('Saving changes to Supabase Cloud...');
+
+    try {
+      const { error } = await supabase
+        .from('packing_lists')
+        .upsert(dbData, { onConflict: 'id' });
+
+      if (error) throw error;
+
+      toast.success(editing ? 'Packing List updated successfully' : 'Packing List created successfully', { id: savingToast });
+      setEditOpen(false);
+      fetchPackingLists(); // تحديث فوري للقائمة من السيرفر السحابي
+    } catch (error: any) {
+      console.error('Database Save Error:', error);
+      toast.error(`Save failed: ${error.message}`, { id: savingToast });
     }
-    
-    // Sort by date
-    updated.sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-    
-    setPackingLists(updated);
-    savePackingLists(updated);
-    setEditOpen(false);
   };
 
-  const handleDelete = () => {
+  // 3️⃣ دالة الحذف المعدلة لمسح السجل من قاعدة البيانات السحابية
+  const handleDelete = async () => {
     if (!deleting) return;
-    const updated = packingLists.filter(p => p.id !== deleting.id);
-    setPackingLists(updated);
-    savePackingLists(updated);
-    toast.success('Packing List removed');
-    setDeleting(null);
+    const deletingToast = toast.loading('Removing packing list from server...');
+
+    try {
+      const { error } = await supabase
+        .from('packing_lists')
+        .delete()
+        .eq('id', deleting.id);
+
+      if (error) throw error;
+
+      toast.success('Packing List removed completely', { id: deletingToast });
+      setDeleting(null);
+      fetchPackingLists(); // تحديث القائمة فوراً
+    } catch (error: any) {
+      console.error('Delete error:', error);
+      toast.error(`Failed to delete: ${error.message}`, { id: deletingToast });
+    }
   };
 
   return (
@@ -190,7 +294,9 @@ useEffect(() => {
       />
 
       <div className="space-y-4">
-        {packingLists.map(pl => (
+        {isLoading ? (
+          <div className="text-center py-10 text-muted-foreground animate-pulse">Loading packing lists from server...</div>
+        ) : packingLists.map(pl => (
           <div key={pl.id} className="rounded-xl bg-card border shadow-sm p-5 hover:shadow-md transition-shadow">
             <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-4">
               <div className="flex-1">
@@ -209,9 +315,8 @@ useEffect(() => {
                   <div><span className="text-muted-foreground block text-[10px] uppercase">B/L Number</span><span className="font-medium font-mono">{pl.blNumber || '—'}</span></div>
                   <div><span className="text-muted-foreground block text-[10px] uppercase">Custom Release</span><span className="font-medium">{pl.customRelease || '—'}</span></div>
                   
-                  {/* Legacy Container */}
                   {pl.containerNumber && <div><span className="text-muted-foreground block text-[10px] uppercase">Container</span><span className="font-medium">{pl.containerNumber}</span></div>}
-                  {/* Dynamic Containers */}
+                  
                   {pl.containerNumbers && pl.containerNumbers.length > 0 && (
                     <div className="col-span-2 md:col-span-4 mt-2">
                       <span className="text-muted-foreground block text-[10px] uppercase mb-1">Containers ({pl.numberOfContainers})</span>
@@ -221,7 +326,6 @@ useEffect(() => {
                     </div>
                   )}
                   
-                  {/* Common Shipment Details */}
                   <div className="col-span-2 md:col-span-4 grid grid-cols-2 md:grid-cols-4 gap-x-4 gap-y-2 mt-2 pt-2 border-t border-dashed">
                     <div><span className="text-muted-foreground block text-[10px] uppercase">Shipping Agent</span><span className="font-medium">{pl.shippingAgent || '—'}</span></div>
                     <div><span className="text-muted-foreground block text-[10px] uppercase">DHL Number</span><span className="font-medium">{pl.dhlNumber || '—'}</span></div>
@@ -231,20 +335,17 @@ useEffect(() => {
                     <div><span className="text-muted-foreground block text-[10px] uppercase">POD / Final Dest</span><span className="font-medium">{[pl.pod, pl.finalDestination].filter(Boolean).join(' ➔ ') || '—'}</span></div>
                   </div>
                   
-                  {/* Legacy Single Product Details */}
                   {pl.productName && (
                     <div className="col-span-2 md:col-span-4 grid grid-cols-2 md:grid-cols-4 gap-x-4 gap-y-2 mt-2 pt-2 border-t border-dashed">
                       <div className="col-span-2 md:col-span-4 font-semibold text-xs text-primary mb-1">Legacy Product</div>
                       <div><span className="text-muted-foreground block text-[10px] uppercase">Product Name</span><span className="font-medium">{pl.productName || '—'}</span></div>
                       <div><span className="text-muted-foreground block text-[10px] uppercase">Variety / Grade</span><span className="font-medium">{[pl.variety, pl.grade].filter(Boolean).join(' - ') || '—'}</span></div>
                       <div><span className="text-muted-foreground block text-[10px] uppercase">Caliber</span><span className="font-medium">{pl.caliber || '—'}</span></div>
-                      
                       <div><span className="text-muted-foreground block text-[10px] uppercase">Net / Gross Wt</span><span className="font-medium">{[pl.netWeight, pl.grossWeight].filter(Boolean).join(' / ') || '—'}</span></div>
                       <div><span className="text-muted-foreground block text-[10px] uppercase">Packages / Qty</span><span className="font-medium">{[pl.numberOfPackages, pl.packagesQtyKind].filter(Boolean).join(' | ') || '—'}</span></div>
                     </div>
                   )}
 
-                  {/* Dynamic Products Array */}
                   {pl.products && pl.products.length > 0 && (
                     <div className="col-span-2 md:col-span-4 space-y-3 mt-3">
                       <div className="font-semibold text-xs text-primary mb-1 border-t border-dashed pt-3">Products List ({pl.numberOfProducts})</div>
@@ -255,7 +356,6 @@ useEffect(() => {
                           </div>
                           <div><span className="text-muted-foreground block text-[10px] uppercase">Variety / Grade</span><span className="font-medium">{[p.variety, p.grade].filter(Boolean).join(' - ') || '—'}</span></div>
                           <div><span className="text-muted-foreground block text-[10px] uppercase">Caliber</span><span className="font-medium">{p.caliber || '—'}</span></div>
-                          
                           <div><span className="text-muted-foreground block text-[10px] uppercase">Net / Gross Wt</span><span className="font-medium">{[p.netWeight, p.grossWeight].filter(Boolean).join(' / ') || '—'}</span></div>
                           <div><span className="text-muted-foreground block text-[10px] uppercase">Packages / Qty</span><span className="font-medium">{[p.numberOfPackages, p.packagesQtyKind].filter(Boolean).join(' | ') || '—'}</span></div>
                         </div>
@@ -305,7 +405,7 @@ useEffect(() => {
           </div>
         ))}
 
-        {packingLists.length === 0 && (
+        {!isLoading && packingLists.length === 0 && (
           <div className="rounded-xl border-2 border-dashed p-12 text-center mt-6">
             <PackageSearch className="mx-auto h-12 w-12 text-muted-foreground/30" />
             <h3 className="mt-4 text-lg font-semibold">No Packing Lists</h3>
@@ -316,28 +416,25 @@ useEffect(() => {
         )}
       </div>
 
+      {/* باقي كود الـ Dialog الـ JSX مـثـل مـا هـو دون أي تـغـيـيـرات */}
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{editing ? 'Edit Packing List' : 'Add Packing List'}</DialogTitle>
           </DialogHeader>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            
             <div>
               <Label>Client Name</Label>
               <Input value={form.clientName} onChange={e => setForm(f => ({ ...f, clientName: e.target.value }))} placeholder="e.g. Acme Corp" />
             </div>
-            
             <div>
               <Label>Date</Label>
               <DatePicker value={form.date} onChange={v => setForm(f => ({ ...f, date: v }))} />
             </div>
-
             <div>
               <Label>B/L Number (رقم البوليصة)</Label>
               <Input value={form.blNumber} onChange={e => setForm(f => ({ ...f, blNumber: e.target.value }))} />
             </div>
-
             <div className="md:col-span-2">
               <Label>Containers</Label>
               <div className="flex gap-2 items-center mb-2">
@@ -367,17 +464,14 @@ useEffect(() => {
                 </div>
               )}
             </div>
-
             <div>
               <Label>Invoice Number</Label>
               <Input value={form.invoiceNumber} onChange={e => setForm(f => ({ ...f, invoiceNumber: e.target.value }))} />
             </div>
-
             <div>
               <Label>Custom Release (الافراج الجمركي)</Label>
               <Input value={form.customRelease} onChange={e => setForm(f => ({ ...f, customRelease: e.target.value }))} />
             </div>
-            
             <div className="md:col-span-2 border-t pt-4 mt-2">
               <h4 className="text-sm font-semibold mb-3 text-primary">Shipment Details</h4>
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -394,7 +488,6 @@ useEffect(() => {
                   <DatePicker value={form.shippingDate} onChange={v => setForm(f => ({ ...f, shippingDate: v }))} />
                 </div>
                 <div className="hidden md:block"></div>
-                
                 <div>
                   <Label className="text-xs">POL (Port of Loading)</Label>
                   <Input value={form.pol} onChange={e => setForm(f => ({ ...f, pol: e.target.value }))} className="h-8 text-sm" />
@@ -409,7 +502,6 @@ useEffect(() => {
                 </div>
               </div>
             </div>
-
             <div className="md:col-span-2 border-t pt-4 mt-2">
               <div className="flex items-center gap-4 mb-4">
                 <h4 className="text-sm font-semibold text-primary whitespace-nowrap">Product Details</h4>
@@ -424,7 +516,6 @@ useEffect(() => {
                   }} className="h-8 text-sm" />
                 </div>
               </div>
-
               <div className="space-y-6">
                 {Array.from({ length: Number(form.numberOfProducts) || 0 }).map((_, idx) => {
                   const p = form.products[idx] || {};
@@ -453,7 +544,6 @@ useEffect(() => {
                           <Label className="text-xs">Caliber</Label>
                           <Input value={p.caliber || ''} onChange={e => updateP('caliber', e.target.value)} className="h-8 text-sm" />
                         </div>
-                        
                         <div>
                           <Label className="text-xs">No. of Packages</Label>
                           <Input value={p.numberOfPackages || ''} onChange={e => updateP('numberOfPackages', e.target.value)} className="h-8 text-sm" />
@@ -476,12 +566,10 @@ useEffect(() => {
                 })}
               </div>
             </div>
-
             <div className="md:col-span-2">
               <Label>Note / Info</Label>
               <Textarea value={form.note} onChange={e => setForm(f => ({ ...f, note: e.target.value }))} placeholder="Any additional information..." className="h-20" />
             </div>
-
             <div className="md:col-span-2 border-t pt-4 mt-2">
               <div className="flex items-center justify-between mb-3">
                 <Label>Attachments</Label>
@@ -490,11 +578,10 @@ useEffect(() => {
                 </Button>
                 <input type="file" ref={fileInputRef} className="hidden" accept="image/*,.pdf,.xlsx,.xls,.csv" onChange={handleFileUpload} />
               </div>
-              
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {form.attachments.map((att, i) => (
                   <div key={att.id} className="flex gap-2 items-center border rounded-lg p-2 bg-muted/20">
-                    {att.url.startsWith('data:image/') ? (
+                    {att.url.startsWith('data:image/') || att.url.match(/\.(jpeg|jpg|gif|png|webp)/i) ? (
                       <img src={att.url} className="w-10 h-10 rounded object-cover" />
                     ) : (
                       <div className="w-10 h-10 rounded bg-muted flex flex-shrink-0 items-center justify-center">
@@ -518,7 +605,6 @@ useEffect(() => {
                 )}
               </div>
             </div>
-
           </div>
           <DialogFooter className="mt-6">
             <Button variant="outline" onClick={() => setEditOpen(false)}>Cancel</Button>

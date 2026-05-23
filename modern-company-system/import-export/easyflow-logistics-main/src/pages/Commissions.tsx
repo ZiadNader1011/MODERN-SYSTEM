@@ -1,8 +1,8 @@
 import { useState, useRef, useEffect } from 'react';
-import { useTranslation } from '../../node_modules/react-i18next';
+import { useTranslation } from 'react-i18next'; // تم إصلاح المسار هنا لـ Vercel
 import { PageHeader } from '@/components/PageHeader';
 import { DeleteConfirmDialog } from '@/components/DeleteConfirmDialog';
-import { getCommissions, saveCommissions, generateId, Commission, formatDate, formatCurrency } from '@/data/store';
+import { generateId, Commission, formatDate, formatCurrency } from '@/data/store';
 import { compressImage } from '@/utils/imageCompression';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -13,6 +13,7 @@ import { DatePicker } from '@/components/DatePicker';
 import { FileViewer } from '@/components/FileViewer';
 import { Plus, Pencil, Trash2, FileText, Calendar, Camera, Briefcase, UserCircle, Calculator } from 'lucide-react';
 import { toast } from 'sonner';
+import { supabase } from '@/utils/supabaseClient';
 
 export default function Commissions() {
   const { t } = useTranslation();
@@ -23,17 +24,31 @@ export default function Commissions() {
   const [deleting, setDeleting] = useState<Commission | null>(null);
   
   const [viewingFile, setViewingFile] = useState<string | null>(null);
-
-
   const [commissions, setCommissions] = useState<Commission[]>([]);
+  const [loading, setLoading] = useState(true);
 
-useEffect(() => {
-  setCommissions(getCommissions());
-  const timer = setTimeout(() => {
-    setCommissions(getCommissions());
-  }, 600);
-  return () => clearTimeout(timer);
-}, []);
+  // جلب البيانات مباشرة من Supabase عند تحميل الصفحة
+  const fetchCommissions = async () => {
+    try {
+      setLoading(true);
+      const { data, error } = await supabase
+        .from('commissions')
+        .select('*')
+        .order('date', { ascending: false });
+
+      if (error) throw error;
+      setCommissions(data || []);
+    } catch (error: any) {
+      console.error('Error fetching commissions:', error);
+      toast.error('Failed to load commissions from server');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchCommissions();
+  }, []);
 
   const emptyForm = { 
     date: new Date().toISOString().split('T')[0], 
@@ -76,78 +91,172 @@ useEffect(() => {
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0];
+      
       if (file.size > 5 * 1024 * 1024) {
         toast.error('File too large. Maximum size is 5MB.');
         return;
       }
       
       const isImage = file.type.startsWith('image/');
-      let url = '';
-      
-      if (isImage) {
-        url = await compressImage(file);
-      } else {
-        url = await new Promise((resolve) => {
-          const reader = new FileReader();
-          reader.onload = (ev) => resolve(ev.target?.result as string);
-          reader.readAsDataURL(file);
-        });
+      let fileToUpload: File | Blob = file;
+      const loadingToast = toast.loading('Uploading file...');
+
+      try {
+        if (isImage) {
+          const compressedDataUrl = await compressImage(file);
+          const res = await fetch(compressedDataUrl);
+          fileToUpload = await res.blob();
+        }
+
+        const fileExt = file.name.split('.').pop();
+        const fileName = `${generateId()}-${Date.now()}.${fileExt}`;
+        const filePath = `attachments/${fileName}`;
+
+        const { error } = await supabase.storage
+          .from('commissions-attachments')
+          .upload(filePath, fileToUpload, {
+            cacheControl: '3600',
+            upsert: false,
+            contentType: file.type
+          });
+
+        if (error) throw error;
+
+        const { data: { publicUrl } } = supabase.storage
+          .from('commissions-attachments')
+          .getPublicUrl(filePath);
+
+        setForm(f => ({
+          ...f,
+          attachments: [
+            ...f.attachments, 
+            { 
+              id: generateId(), 
+              url: publicUrl, 
+              description: '', 
+              createdAt: new Date().toISOString() 
+            }
+          ]
+        }));
+
+        toast.success('File uploaded successfully', { id: loadingToast });
+
+      } catch (error: any) {
+        console.error('Error uploading:', error);
+        toast.error(`Upload failed: ${error.message || 'Unknown error'}`, { id: loadingToast });
+      }
+    }
+    
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const removeAttachment = async (index: number) => {
+    const fileUrl = form.attachments[index].url;
+    const deletingToast = toast.loading('Deleting file from server...');
+
+    try {
+      const filename = fileUrl.split('/').pop();
+
+      if (filename) {
+        const { error } = await supabase.storage
+          .from('commissions-attachments')
+          .remove([`attachments/${filename}`]);
+
+        if (error) throw error;
       }
 
       setForm(f => ({
         ...f,
-        attachments: [...f.attachments, { id: generateId(), url, description: '', createdAt: new Date().toISOString() }]
+        attachments: f.attachments.filter((_, i) => i !== index)
       }));
+
+      toast.success('File deleted successfully', { id: deletingToast });
+
+    } catch (error: any) {
+      console.error('Error deleting file:', error);
+      toast.error(`Failed to delete file: ${error.message}`, { id: deletingToast });
     }
-    if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
-  const removeAttachment = (index: number) => {
-    setForm(f => ({
-      ...f,
-      attachments: f.attachments.filter((_, i) => i !== index)
-    }));
-  };
+  // حفظ وتعديل البيانات مباشرة في الـ Database الخاصة بـ Supabase
+  const handleSave = async () => {
+    if (!form.clientName || !form.date) {
+      toast.error('Please fill in all required fields');
+      return;
+    }
 
-  const handleSave = () => {
+    const savingToast = toast.loading('Saving data to cloud...');
     const totalQty = Number(form.totalQuantityTon) || 0;
     const commPerTon = Number(form.commissionPerTon) || 0;
 
- const cData: Commission = {
-  ...form,
-  numberOfContainers: Number(form.numberOfContainers) || 0,
-  totalQuantityTon: totalQty,
-  commissionPerTon: commPerTon,
-  id: editing ? editing.id : generateId(),
-} as unknown as Commission;
+    const cData = {
+      clientName: form.clientName,
+      date: form.date,
+      trader: form.trader,
+      qualityRepresentative: form.qualityRepresentative,
+      product: form.product,
+      numberOfContainers: Number(form.numberOfContainers) || 0,
+      totalQuantityTon: totalQty,
+      commissionPerTon: commPerTon,
+      currency: form.currency,
+      attachments: form.attachments
+    };
     
-    let updated;
-    if (editing) {
-      updated = commissions.map(p => p.id === editing.id ? cData : p);
-      toast.success('Commission updated successfully');
-    } else {
-      updated = [...commissions, cData];
-      toast.success('Commission created successfully');
+    try {
+      if (editing) {
+        // تحديث سجل موجود
+        const { error } = await supabase
+          .from('commissions')
+          .update(cData)
+          .eq('id', editing.id);
+
+        if (error) throw error;
+        toast.success('Commission updated successfully', { id: savingToast });
+      } else {
+        // إضافة سجل جديد
+        const { error } = await supabase
+          .from('commissions')
+          .insert([cData]);
+
+        if (error) throw error;
+        toast.success('Commission created successfully', { id: savingToast });
+      }
+      
+      setEditOpen(false);
+      fetchCommissions(); // إعادة تحديث القائمة من السيرفر
+    } catch (error: any) {
+      console.error('Error saving:', error);
+      toast.error(`Save failed: ${error.message}`, { id: savingToast });
     }
-    
-    updated.sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-    
-    setCommissions(updated);
-    saveCommissions(updated);
-    setEditOpen(false);
   };
 
-  const handleDelete = () => {
+  // حذف السجل مباشرة من الـ Database الخاصة بـ Supabase
+  const handleDelete = async () => {
     if (!deleting) return;
-    const updated = commissions.filter(p => p.id !== deleting.id);
-    setCommissions(updated);
-    saveCommissions(updated);
-    toast.success('Commission removed');
-    setDeleting(null);
+    const deletingToast = toast.loading('Removing record...');
+    
+    try {
+      const { error } = await supabase
+        .from('commissions')
+        .delete()
+        .eq('id', deleting.id);
+
+      if (error) throw error;
+
+      toast.success('Commission removed', { id: deletingToast });
+      setDeleting(null);
+      fetchCommissions(); // تحديث القائمة
+    } catch (error: any) {
+      console.error('Error deleting:', error);
+      toast.error(`Delete failed: ${error.message}`, { id: deletingToast });
+    }
   };
 
-  // Live calculation for the form
   const formTotalCommission = (Number(form.totalQuantityTon) || 0) * (Number(form.commissionPerTon) || 0);
+
+  const isImageUrl = (url: string) => {
+    return /\.(jpg|jpeg|png|webp|avif|gif)$/i.test(url) || url.startsWith('data:image/');
+  };
 
   return (
     <div className="pb-10">
@@ -158,7 +267,9 @@ useEffect(() => {
       />
 
       <div className="space-y-4">
-        {commissions.map(c => {
+        {loading ? (
+          <div className="text-center py-10 text-muted-foreground animate-pulse">Loading commissions from Supabase...</div>
+        ) : commissions.map(c => {
           const totalComm = c.totalQuantityTon * c.commissionPerTon;
           
           return (
@@ -245,7 +356,7 @@ useEffect(() => {
           );
         })}
 
-        {commissions.length === 0 && (
+        {!loading && commissions.length === 0 && (
           <div className="rounded-xl border-2 border-dashed p-12 text-center mt-6">
             <Briefcase className="mx-auto h-12 w-12 text-muted-foreground/30" />
             <h3 className="mt-4 text-lg font-semibold">No Commissions</h3>
@@ -333,7 +444,7 @@ useEffect(() => {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {form.attachments.map((att, i) => (
                   <div key={att.id} className="flex gap-2 items-center border rounded-lg p-2 bg-muted/20">
-                    {att.url.startsWith('data:image/') ? (
+                    {isImageUrl(att.url) ? (
                       <img src={att.url} className="w-10 h-10 rounded object-cover" />
                     ) : (
                       <div className="w-10 h-10 rounded bg-muted flex flex-shrink-0 items-center justify-center">

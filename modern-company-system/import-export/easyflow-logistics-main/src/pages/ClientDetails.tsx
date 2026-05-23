@@ -91,32 +91,41 @@ export default function ClientDetails() {
   const { id } = useRouterParams();
   const navigate = useRouterNavigate();
   const { t } = useTranslation();
-  const [editOpen, setEditOpen] = useState(false);
-  const [deleteOpen, setDeleteOpen] = useState(false);
-  const [editing, setEditing] = useState<Transaction | null>(null);
-  const [deleting, setDeleting] = useState<Transaction | null>(null);
+  
   const [invoicePrintOpen, setInvoicePrintOpen] = useState(false);
   const [selectedTxForPrint, setSelectedTxForPrint] = useState<Transaction | null>(null);
 
-  const clients = useMemo(() => getClients(), []);
-  const [jobs, setJobs] = useState<Job[]>([]);
-  const [transactions, setTransactions] = useState<Transaction[]>([]);
   const containers = useMemo(() => getContainers(), []);
   const allProducts = useMemo(() => getProducts(), []);
+  
+  const [clients, setClients] = useState(() => getClients());
+  const [jobs, setJobs] = useState(() => getJobs());
+  const [transactions, setTransactions] = useState(() => getTransactions());
 
+  // مراقبة حية ومستمرة لمزامنة الكاش لمنع استرجاع الموتى
   useEffect(() => {
-    setJobs(getJobs());
-    setTransactions(getTransactions());
+    const syncInterval = setInterval(() => {
+      setClients(getClients());
+      setJobs(getJobs());
+      setTransactions(getTransactions());
+    }, 1000); // تحديث هادئ كل ثانية لمنع تعليق البيانات الممسوحة
+
+    return () => clearInterval(syncInterval);
   }, []);
 
-  const [isAddRecordOpen, setIsAddRecordOpen] = useState(false);
+  const client = clients.find(c => c.id === id);
+
+  // حماية صارمة: إذا تم حذف العميل من لوحة التحكم، اخرج فوراً لمنع الـ Form من محاولة إعادة الحفظ الخلفي
+  useEffect(() => {
+    if (clients.length > 0 && !client) {
+      console.log("🚨 Client was deleted from database. Redirecting away immediately...");
+      toast.error("هذا العميل لم يعد موجوداً في قاعدة البيانات");
+      navigate('/clients', { replace: true });
+    }
+  }, [clients, client, navigate]);
+
   const [filterJobId, setFilterJobId] = useState<string>('all');
   const [filterCurrency, setFilterCurrency] = useState<string>('all');
-  const [newRecordJobId, setNewRecordJobId] = useState('');
-  const [newRecordAmount, setNewRecordAmount] = useState('');
-  const [newRecordDesc, setNewRecordDesc] = useState('');
-  const [newRecordCurrency, setNewRecordCurrency] = useState('USD');
-  const [newRecordDate, setNewRecordDate] = useState(new Date().toISOString().split('T')[0]);
 
   const handleAddExcelRow = () => {
     const newTx: Transaction = {
@@ -133,8 +142,9 @@ export default function ClientDetails() {
       blNumber: '',
       createdAt: new Date().toISOString()
     };
-    saveTransactions([...transactions, newTx]);
-    setTransactions([...transactions, newTx]);
+    const updated = [...transactions, newTx];
+    saveTransactions(updated);
+    setTransactions(updated);
   };
 
   const handleTxUpdate = (txId: string, field: keyof Transaction, value: any) => {
@@ -162,10 +172,10 @@ export default function ClientDetails() {
       }
     }
     if (field === 'relatedId' && value === 'none') {
-      if (updatedTx) updatedTx.relatedId = id || '';
+      if (updatedTx) (updatedTx as Transaction).relatedId = id || '';
     }
 
-    if (updatedTx && (field === 'variety' || field === 'caliber' || field === 'grade') && updatedTx.relatedId && updatedTx.relatedId !== 'none' && updatedTx.relatedId !== id) {
+    if (updatedTx && (field === 'variety' || field === 'caliber' || field === 'grade') && (updatedTx as Transaction).relatedId && (updatedTx as Transaction).relatedId !== 'none' && (updatedTx as Transaction).relatedId !== id) {
       const job = jobs.find(j => j.id === updatedTx!.relatedId);
       if (job) {
         const updatedJobs = jobs.map(j => {
@@ -190,34 +200,10 @@ export default function ClientDetails() {
   };
 
   const handleDeleteTx = (txId: string) => {
-    const txToDelete = transactions.find(t => t.id === txId);
     const updated = transactions.filter(t => t.id !== txId);
     saveTransactions(updated);
     setTransactions(updated);
   };
-
-  const handleAddRecord = () => {
-    const newTx: Transaction = {
-      id: generateId(),
-      relatedId: newRecordJobId || id,
-      entityId: id,
-      type: 'incoming',
-      amount: Number(newRecordAmount) || 0,
-      currency: newRecordCurrency,
-      date: newRecordDate,
-      description: newRecordDesc || 'Payment Received',
-      createdAt: new Date().toISOString()
-    };
-    const updated = [...transactions, newTx];
-    saveTransactions(updated);
-    setTransactions(updated);
-    setIsAddRecordOpen(false);
-    setNewRecordJobId('');
-    setNewRecordAmount('');
-    setNewRecordDesc('');
-  };
-
-  const client = clients.find(c => c.id === id);
 
   // Get all operations involving this client (Export usually)
   const clientJobs = useMemo(() => {
@@ -294,32 +280,14 @@ export default function ClientDetails() {
     }
 
     return allTxs.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-  }, [transactions, jobs, id, filterJobId, filterCurrency]);
+  }, [transactions, jobs, id, filterJobId, filterCurrency, allProducts]);
 
-
-
-  const handleJobUpdate = (jobId: string, field: keyof Job, value: string | number) => {
-    setJobs(prev => {
-      const updated = prev.map(job => {
-        if (job.id === jobId) {
-          const newJob = { ...job, [field]: value };
-          if (field === 'rawMaterialPricePerTon' || field === 'rawMaterialWeight') {
-            const p = newJob.rawMaterialPricePerTon || 0;
-            const w = newJob.rawMaterialWeight || 0;
-            newJob.rawMaterialCost = p * w;
-            newJob.totalPrice = newJob.rawMaterialCost;
-          } else if (field === 'rawMaterialCost') {
-            newJob.totalPrice = newJob.rawMaterialCost;
-          }
-          return newJob;
-        }
-        return job;
-      });
-      saveJobs(updated);
-      return updated;
-    });
+  const printRow = (tx: Transaction) => {
+    setSelectedTxForPrint(tx);
+    setInvoicePrintOpen(true);
   };
 
+  // تم تجميع الـ الحسابات وحالة الحماية المبكرة لتعمل بسلاسة بعد الـ Hooks
   if (!client) {
     return (
       <div className="p-8 text-center">
@@ -329,16 +297,11 @@ export default function ClientDetails() {
     );
   }
 
-  const printRow = (tx: Transaction) => {
-    setSelectedTxForPrint(tx);
-    setInvoicePrintOpen(true);
-  };
-
   const totalBalanceObj: Record<string, number> = {};
   const totalPaymentsObj: Record<string, number> = {};
   const totalOperationsObj: Record<string, number> = {};
+  
   clientTransactions.forEach(t => {
-    // For client: incoming (payment) decreases debt, raw_material/outgoing (cost/charge) increases debt
     const amt = t.type === 'incoming' ? -t.amount : t.amount;
     totalBalanceObj[t.currency || 'USD'] = (totalBalanceObj[t.currency || 'USD'] || 0) + amt;
     if (t.type === 'incoming') {
@@ -357,7 +320,7 @@ export default function ClientDetails() {
           </Button>
           <div>
             <h1 className="text-2xl font-bold tracking-tight">Client Ledger: {client.name}</h1>
-            <p className="text-muted-foreground flex items-center gap-2">
+            <div className="text-muted-foreground flex items-center gap-2 text-sm mt-1">
               <span>Country: <strong>{client.country}</strong></span>
               {client.dhl && (
                 <>
@@ -371,7 +334,7 @@ export default function ClientDetails() {
                   <span>Agent: <strong>{client.agentName}</strong></span>
                 </>
               )}
-            </p>
+            </div>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -467,7 +430,6 @@ export default function ClientDetails() {
                           </Select>
                         );
                       })()}
-
                     </td>
                     <td className="px-4 py-2">
                       {(tx as any).isAuto ? <span className="text-xs text-primary font-medium">{tx.description}</span> : <EditableCell type="text" value={tx.description} onSave={(v) => handleTxUpdate(tx.id, 'description', v)} placeholder="Product..." className="w-full text-xs bg-transparent" />}
@@ -542,36 +504,42 @@ export default function ClientDetails() {
                       )}
                     </td>
                     <td className="px-4 py-2 text-right">
-                      {(tx as any).isAuto ? <span className="text-xs text-muted-foreground">{tx.weightInTons || 0}</span> : <EditableCell type="number" value={tx.weightInTons || 0} onSave={(v) => handleTxUpdate(tx.id, 'weightInTons', v)} className="w-20 text-xs bg-transparent text-right" />}
+                      {(tx as any).isAuto ? <span className="text-xs font-medium text-muted-foreground">{tx.weightInTons || 0}</span> : <EditableCell type="number" value={tx.weightInTons || 0} onSave={(v) => handleTxUpdate(tx.id, 'weightInTons', v)} className="w-20 text-xs bg-transparent text-right" />}
                     </td>
                     <td className="px-4 py-2 text-right">
-                      {(tx as any).isAuto ? <span className="text-xs text-muted-foreground">{tx.pricePerTon || 0}</span> : <EditableCell type="number" value={tx.pricePerTon || 0} onSave={(v) => handleTxUpdate(tx.id, 'pricePerTon', v)} className="w-20 text-xs bg-transparent text-right" />}
+                      {(tx as any).isAuto ? <span className="text-xs font-medium text-muted-foreground">{tx.pricePerTon || 0}</span> : <EditableCell type="number" value={tx.pricePerTon || 0} onSave={(v) => handleTxUpdate(tx.id, 'pricePerTon', v)} className="w-20 text-xs bg-transparent text-right" />}
                     </td>
                     <td className="px-4 py-2 text-right">
-                      {(tx as any).isAuto ? (
-                        <span className="text-xs font-medium text-red-600">{tx.amount}</span>
-                      ) : tx.type !== 'incoming' ? (
-                        <EditableCell type="number" value={tx.amount} onSave={(v) => handleTxUpdate(tx.id, 'amount', v)} className="w-24 text-xs font-medium bg-transparent text-right text-red-600" />
-                      ) : (
-                        <Button variant="ghost" size="sm" className="h-8 text-xs text-muted-foreground hover:text-red-600" onClick={() => handleTxUpdate(tx.id, 'type', 'raw_material')}>Set Charge</Button>
-                      )}
+                      <div className="flex justify-end items-center">
+                        {(tx as any).isAuto ? (
+                          <span className="text-xs font-medium text-red-600">{tx.amount}</span>
+                        ) : tx.type !== 'incoming' ? (
+                          <EditableCell type="number" value={tx.amount} onSave={(v) => handleTxUpdate(tx.id, 'amount', v)} className="w-24 text-xs font-medium bg-transparent text-right text-red-600" />
+                        ) : (
+                          <Button variant="ghost" size="sm" className="h-8 text-xs text-muted-foreground hover:text-red-600" onClick={() => handleTxUpdate(tx.id, 'type', 'raw_material')}>Set Charge</Button>
+                        )}
+                      </div>
                     </td>
-                    <td className="px-4 py-2 text-right flex justify-end">
-                      {tx.type === 'incoming' ? (
-                        <EditableCell type="number" value={tx.amount} onSave={(v) => handleTxUpdate(tx.id, 'amount', v)} className="w-28 text-base font-bold bg-transparent text-right text-green-600" />
-                      ) : (
-                        <Button variant="ghost" size="sm" className="h-8 text-xs text-muted-foreground hover:text-green-600" onClick={() => handleTxUpdate(tx.id, 'type', 'incoming')}>Set Payment</Button>
-                      )}
+                    <td className="px-4 py-2 text-right">
+                      <div className="flex justify-end items-center">
+                        {tx.type === 'incoming' ? (
+                          <EditableCell type="number" value={tx.amount} onSave={(v) => handleTxUpdate(tx.id, 'amount', v)} className="w-28 text-base font-bold bg-transparent text-right text-green-600" />
+                        ) : (
+                          <Button variant="ghost" size="sm" className="h-8 text-xs text-muted-foreground hover:text-green-600" onClick={() => handleTxUpdate(tx.id, 'type', 'incoming')}>Set Payment</Button>
+                        )}
+                      </div>
                     </td>
-                    <td className="px-4 py-2 text-center flex items-center justify-center gap-1 no-print">
-                      <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-primary" onClick={() => printRow(tx)}>
-                        <Printer className="h-4 w-4" />
-                      </Button>
-                      {!(tx as any).isAuto && (
-                        <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" onClick={() => handleDeleteTx(tx.id)}>
-                          <Trash2 className="h-4 w-4" />
+                    <td className="px-4 py-2 text-center no-print">
+                      <div className="flex items-center justify-center gap-1">
+                        <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-primary" onClick={() => printRow(tx)}>
+                          <Printer className="h-4 w-4" />
                         </Button>
-                      )}
+                        {!(tx as any).isAuto && (
+                          <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" onClick={() => handleDeleteTx(tx.id)}>
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))
@@ -584,18 +552,21 @@ export default function ClientDetails() {
                   <td colSpan={3} className="px-4 py-4 text-center text-lg text-primary whitespace-nowrap border-l">
                     {formatBalanceObj(totalOperationsObj)}
                   </td>
+                  <td colSpan={4}></td>
                 </tr>
                 <tr className="border-t">
                   <td colSpan={7} className="px-4 py-4 text-right uppercase">Total Payment Received:</td>
                   <td colSpan={3} className="px-4 py-4 text-center text-lg text-success whitespace-nowrap border-l">
                     {formatBalanceObj(totalPaymentsObj)}
                   </td>
+                  <td colSpan={4}></td>
                 </tr>
                 <tr className="border-t">
                   <td colSpan={7} className="px-4 py-4 text-right uppercase">Total Balance Owed by Client:</td>
                   <td colSpan={3} className="px-4 py-4 text-center text-lg text-destructive whitespace-nowrap border-l">
                     {formatBalanceObj(totalBalanceObj)}
                   </td>
+                  <td colSpan={4}></td>
                 </tr>
               </tfoot>
             )}

@@ -16,30 +16,34 @@ import { toast } from 'sonner';
 export default function Clients() {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const [clients, setClients] = useState<Client[]>([]); // 👈 جعلنا البداية مصفوفة فارغة مؤقتاً
+  
+  // تجميع كل الـ States الخاصة بالبيانات لتحديثها معاً
+  const [clients, setClients] = useState<Client[]>([]);
+  const [jobs, setJobs] = useState<any[]>([]);
+  const [transactions, setTransactions] = useState<any[]>([]);
 
   // ============================================================================
-  // 🔥 المزامنة التلقائية عند فتح الصفحة وعمل ريفريش لمنع اختفاء البيانات 🔥
+  // 🔥 المزامنة التلقائية والذكية مع المخزن المركزي 🔥
   // ============================================================================
   useEffect(() => {
-    // 1. جلب البيانات من الكاش فوراً إذا كانت متوفرة
-    setClients(getClients());
+    // دالة موحدة لتحديث كافة البيانات من الـ store
+    const syncWithStore = () => {
+      setClients(getClients());
+      setJobs(getJobs());
+      setTransactions(getTransactions());
+    };
 
-    // 2. عمل فحص دوري خفيف (Polling) كل ثانية حتى تكتمل عملية الـ Initialize للمخزن
+    // 1. جلب البيانات المتاحة فوراً عند فتح الصفحة
+    syncWithStore();
+
+    // 2. فحص دوري آمن (كل ثانيتين) لتحديث الصفحة بالبيانات القادمة من السيرفر
     const interval = setInterval(() => {
-      const latestClients = getClients();
-      if (latestClients.length > 0) {
-        setClients(latestClients);
-        clearInterval(interval); // أوقف الفحص بمجرد ظهور البيانات
-      }
-    }, 1000);
+      syncWithStore();
+    }, 2000); // يفحص ويحدث دورياً لضمان المزامنة في الخلفية
 
     return () => clearInterval(interval);
   }, []);
   // ============================================================================
-
-  const jobs = useMemo(() => getJobs(), []);
-  const transactions = useMemo(() => getTransactions(), []);
 
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -59,9 +63,10 @@ export default function Clients() {
     setEditOpen(true);
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!form.name.trim()) { toast.error('Please enter a client name.'); return; }
     let updated: Client[];
+    
     if (editing) {
       updated = clients.map(c => c.id === editing.id ? { ...c, ...form } : c);
       toast.success(`"${form.name}" has been updated! ✨`);
@@ -69,10 +74,22 @@ export default function Clients() {
       updated = [...clients, { id: generateId(), ...form }];
       toast.success(`"${form.name}" has been added! 🎉`);
     }
+    
+    // التحديث المحلي الفوري
     setClients(updated);
-    saveClients(updated);
+    
+    // إرسال البيانات للباك إيند وحفظها في Supabase
+    await saveClients(updated);
+    
+    // إعادة جلب فوري للبيانات بعد الحفظ للتأكد من المزامنة
+    setClients(getClients());
+    setJobs(getJobs());
+    setTransactions(getTransactions());
+    
     setEditOpen(false);
   };
+  
+  // ... باقي كود الـ handleDelete والـ Return زي ما هم تماماً بدون تغيير
 
   const handleDelete = useCallback(() => {
     if (!deleting) return;

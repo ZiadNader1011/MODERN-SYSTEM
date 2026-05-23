@@ -307,22 +307,22 @@ model Commission {
 
 model ShipmentOperation {
   id                    Int      @id @default(autoincrement())
-  operationDate         DateTime
-  loadingDate           DateTime
-  jobDate               DateTime?
-  jobId                 Int?  
+  operationDate         DateTime @map("operation_date")
+  loadingDate           DateTime @map("loading_date")
+  jobDate               DateTime? @map("job_date")
+  jobId                 Int?     @map("job_id")
   job                   Job?     @relation(fields: [jobId], references: [id], onDelete: SetNull) // العلاقة مع جدول الـ Job
-  clientName            String
+  clientName            String   @map("client_name")
   product               String?
   quantity              String?
-  numberOfContainers    String?
-  containerNumber       String?
-  responsiblePerson     String?
-  qualityRepresentative String?
+  numberOfContainers    String?  @map("number_of_containers")
+  containerNumber       String?  @map("container_number")
+  responsiblePerson     String?  @map("responsible_person")
+  qualityRepresentative String?  @map("quality_representative")
   notes                 String?  @db.Text
   attachments           Json?    @default("[]")
-  createdAt             DateTime @default(now())
-  updatedAt             DateTime @updatedAt
+  createdAt             DateTime @default(now()) @map("created_at")
+  updatedAt             DateTime @updatedAt @map("updated_at")
 
   @@map("shipment_operations")
 }

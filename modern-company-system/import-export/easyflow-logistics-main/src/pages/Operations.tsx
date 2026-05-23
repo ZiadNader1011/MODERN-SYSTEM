@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { useTranslation } from '../../node_modules/react-i18next';
 import { PageHeader } from '@/components/PageHeader';
 import { DeleteConfirmDialog } from '@/components/DeleteConfirmDialog';
-import { getShipmentOperations, saveShipmentOperations, generateId, ShipmentOperation, formatDate, getJobs, getClients, getContainers } from '@/data/store';
+import { generateId, ShipmentOperation, formatDate, getJobs, getClients, getContainers } from '@/data/store';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -14,6 +14,7 @@ import { FileViewer } from '@/components/FileViewer';
 import { compressImage } from '@/utils/imageCompression';
 import { Plus, Pencil, Trash2, Calendar, ClipboardList, Camera, FileText, Wheat, Ship } from 'lucide-react';
 import { toast } from 'sonner';
+import { supabase } from '@/utils/supabaseClient'; 
 
 export default function Operations() {
   const { t } = useTranslation();
@@ -22,16 +23,50 @@ export default function Operations() {
   const clients = getClients();
   const containers = getContainers();
 
-
   const [operations, setOperations] = useState<ShipmentOperation[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
 
-useEffect(() => {
-  setOperations(getShipmentOperations());
-  const timer = setTimeout(() => {
-    setOperations(getShipmentOperations());
-  }, 600);
-  return () => clearTimeout(timer);
-}, []);
+  // 1. جلب البيانات من جدول سوبابيز مباشرة عند تحميل الصفحة
+  const fetchOperations = async () => {
+    try {
+      setIsLoading(true);
+     const { data, error } = await supabase
+  .from('shipment_operations')
+  .select('*')
+  .order('operation_date', { ascending: false });
+
+      if (error) throw error;
+
+      // ضبط أسماء الأعمدة لتطابق واجهة الـ React (CamelCase)
+      const formattedData = (data || []).map((row: any) => ({
+        id: row.id,
+        operationDate: row.operationDate || row.operation_date, 
+        loadingDate: row.loadingDate || row.loading_date,
+        jobId: row.jobId || row.job_id,
+        clientName: row.clientName || row.client_name,
+        product: row.product,
+        quantity: row.quantity,
+        numberOfContainers: row.numberOfContainers || row.number_of_containers,
+        containerNumber: row.containerNumber || row.container_number,
+        responsiblePerson: row.responsiblePerson || row.responsible_person,
+        qualityRepresentative: row.qualityRepresentative || row.quality_representative,
+        notes: row.notes,
+        attachments: row.attachments || [],
+        createdAt: row.createdAt || row.created_at
+      }));
+
+      setOperations(formattedData);
+    } catch (error: any) {
+      console.error('Error fetching data:', error);
+      toast.error('Failed to load operations from server');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchOperations();
+  }, []);
 
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -63,20 +98,21 @@ useEffect(() => {
     setEditOpen(true);
   };
 
-  const openEdit = (op: ShipmentOperation) => {
+  const openEdit = (op: any) => {
     setEditing(op);
     setForm({ 
-      operationDate: op.operationDate || op.jobDate || new Date().toISOString().split('T')[0], 
-      jobId: op.jobId ? op.jobId.toString() : 'none', 
-      clientName: op.clientName, 
+      // تأمين قراءة المتغيرات بكلا الصيغتين CamelCase و SnakeCase لتجنب الـ undefined عند التعديل
+      operationDate: op.operationDate || op.operation_date || new Date().toISOString().split('T')[0], 
+      jobId: op.jobId ? op.jobId.toString() : (op.job_id ? op.job_id.toString() : 'none'), 
+      clientName: op.clientName || op.client_name || '', 
       product: op.product || '',
-      numberOfContainers: op.numberOfContainers || '',
-      quantity: op.quantity, 
-      loadingDate: op.loadingDate, 
-      containerNumber: op.containerNumber, 
-      responsiblePerson: op.responsiblePerson || '',
-      qualityRepresentative: op.qualityRepresentative || '',
-      notes: op.notes,
+      numberOfContainers: op.numberOfContainers || op.number_of_containers || '',
+      quantity: op.quantity || '', 
+      loadingDate: op.loadingDate || op.loading_date || new Date().toISOString().split('T')[0], 
+      containerNumber: op.containerNumber || op.container_number || '', 
+      responsiblePerson: op.responsiblePerson || op.responsible_person || '',
+      qualityRepresentative: op.qualityRepresentative || op.quality_representative || '',
+      notes: op.notes || '',
       attachments: [...(op.attachments || [])]
     });
     setEditOpen(true);
@@ -85,65 +121,152 @@ useEffect(() => {
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0];
-      const isImage = file.type.startsWith('image/');
-      let url = '';
-      if (isImage) {
-        url = await compressImage(file);
-      } else {
-        url = await new Promise((resolve) => {
-          const reader = new FileReader();
-          reader.onload = (ev) => resolve(ev.target?.result as string);
-          reader.readAsDataURL(file);
-        });
+      if (file.size > 5 * 1024 * 1024) {
+        toast.error('File too large. Maximum size is 5MB.');
+        return;
       }
-      setForm(f => ({
-        ...f,
-        attachments: [...f.attachments, { id: generateId(), url, description: '', createdAt: new Date().toISOString() }]
-      }));
+      
+      const isImage = file.type.startsWith('image/');
+      let fileToUpload: File | Blob = file;
+      const loadingToast = toast.loading('Uploading file to Supabase Storage...');
+
+      try {
+        if (isImage) {
+          const compressedDataUrl = await compressImage(file);
+          const res = await fetch(compressedDataUrl);
+          fileToUpload = await res.blob();
+        }
+
+        const fileExt = file.name.split('.').pop();
+        const fileName = `${generateId()}-${Date.now()}.${fileExt}`;
+        const filePath = `operations/${fileName}`;
+
+        const { error } = await supabase.storage
+          .from('commissions-attachments')
+          .upload(filePath, fileToUpload, {
+            cacheControl: '3600',
+            upsert: false,
+            contentType: file.type
+          });
+
+        if (error) throw error;
+
+        const { data: { publicUrl } } = supabase.storage
+          .from('commissions-attachments')
+          .getPublicUrl(filePath);
+
+        setForm(f => ({
+          ...f,
+          attachments: [
+            ...f.attachments, 
+            { id: generateId(), url: publicUrl, description: '', createdAt: new Date().toISOString() }
+          ]
+        }));
+
+        toast.success('File uploaded successfully', { id: loadingToast });
+      } catch (error: any) {
+        console.error('Error uploading:', error);
+        toast.error(`Upload failed: ${error.message}`, { id: loadingToast });
+      }
     }
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
-  const removeAttachment = (index: number) => {
-    setForm(f => ({
-      ...f,
-      attachments: f.attachments.filter((_, i) => i !== index)
-    }));
-  };
+  const removeAttachment = async (index: number) => {
+    const fileUrl = form.attachments[index].url;
+    const deletingToast = toast.loading('Deleting file from server...');
 
-  const handleSave = () => {
-    const finalJobId = form.jobId && form.jobId !== 'none' ? Number(form.jobId) : null;
+    try {
+      const filename = fileUrl.split('/').pop();
+      if (filename) {
+        await supabase.storage
+          .from('commissions-attachments')
+          .remove([`operations/${filename}`]);
+      }
 
-    const opData: ShipmentOperation = {
-      ...form,
-      jobId: finalJobId as any, 
-      id: editing ? editing.id : generateId(),
-      createdAt: editing ? editing.createdAt : new Date().toISOString(),
-    };
-    
-    let updated;
-    if (editing) {
-      updated = operations.map(o => o.id === editing.id ? opData : o);
-      toast.success(t('Operation updated successfully', 'Operation updated successfully'));
-    } else {
-      updated = [...operations, opData];
-      toast.success(t('Operation created successfully', 'Operation created successfully'));
+      setForm(f => ({
+        ...f,
+        attachments: f.attachments.filter((_, i) => i !== index)
+      }));
+      toast.success('File deleted successfully', { id: deletingToast });
+    } catch (error: any) {
+      console.error('Error deleting file:', error);
+      toast.error(`Failed to delete file: ${error.message}`, { id: deletingToast });
     }
-    
-    updated.sort((a,b) => new Date(b.operationDate || b.jobDate || '').getTime() - new Date(a.operationDate || a.jobDate || '').getTime());
-    
-    setOperations(updated);
-    saveShipmentOperations(updated);
-    setEditOpen(false);
   };
 
-  const handleDelete = () => {
+  // 2. دالة الحفظ المعدلة لترسل البيانات والتعديلات فوراً لقاعدة بيانات سوبابيز السحابية
+  const handleSave = async () => {
+    const recordId = editing ? editing.id : generateId();
+    const finalJobId = form.jobId && form.jobId !== 'none' ? form.jobId : null;
+
+    const dbData = {
+      id: recordId,
+      operationDate: form.operationDate,
+      loadingDate: form.loadingDate,
+      jobId: finalJobId,
+      clientName: form.clientName,
+      product: form.product,
+      quantity: form.quantity,
+      numberOfContainers: form.numberOfContainers,
+      containerNumber: form.containerNumber,
+      responsiblePerson: form.responsiblePerson,
+      qualityRepresentative: form.qualityRepresentative,
+      notes: form.notes,
+      attachments: form.attachments
+    };
+
+    const savingToast = toast.loading('Saving changes to Supabase...');
+
+    try {
+      const { error } = await supabase
+        .from('shipment_operations')
+        .upsert(dbData, { onConflict: 'id' });
+
+      if (error) throw error;
+
+      toast.success(editing ? 'Operation updated successfully' : 'Operation created successfully', { id: savingToast });
+      setEditOpen(false);
+      fetchOperations(); 
+    } catch (error: any) {
+      console.error('Database Error:', error);
+      toast.error(`Save failed: ${error.message}`, { id: savingToast });
+    }
+  };
+
+  // 3. دالة الحذف المعدلة لمسح السجل بالكامل من السيرفر
+  const handleDelete = async () => {
     if (!deleting) return;
-    const updated = operations.filter(o => o.id !== deleting.id);
-    setOperations(updated);
-    saveShipmentOperations(updated);
-    toast.success(t('Operation removed', 'Operation removed'));
-    setDeleting(null);
+    const deletingToast = toast.loading('Removing operation from server...');
+
+    try {
+      if (deleting.attachments && deleting.attachments.length > 0) {
+        for (const att of deleting.attachments) {
+          const filename = att.url.split('/').pop();
+          if (filename) {
+            await supabase.storage.from('commissions-attachments').remove([`operations/${filename}`]);
+          }
+        }
+      }
+
+      const { error } = await supabase
+        .from('shipment_operations')
+        .delete()
+        .eq('id', deleting.id);
+
+      if (error) throw error;
+
+      toast.success('Operation removed successfully', { id: deletingToast });
+      setDeleting(null);
+      fetchOperations();
+    } catch (error: any) {
+      console.error('Delete error:', error);
+      toast.error(`Failed to delete: ${error.message}`, { id: deletingToast });
+    }
+  };
+
+  const isImageUrl = (url: string) => {
+    return /\.(jpg|jpeg|png|webp|avif|gif)$/i.test(url) || url.startsWith('data:image/');
   };
 
   return (
@@ -155,7 +278,9 @@ useEffect(() => {
       />
 
       <div className="space-y-4">
-        {operations.map(op => (
+        {isLoading ? (
+          <div className="text-center py-10 text-muted-foreground animate-pulse">Loading operations from cloud database...</div>
+        ) : operations.map(op => (
           <div key={op.id} className="rounded-xl bg-card border shadow-sm p-5 hover:shadow-md transition-shadow">
             <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-4">
               <div className="flex-1">
@@ -176,7 +301,7 @@ useEffect(() => {
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-x-4 gap-y-3 mt-4 text-sm">
                   <div>
                     <span className="text-muted-foreground block text-xs uppercase">{t('Operation Date', 'تاريخ العملية')}</span>
-                    <span className="font-medium flex items-center gap-1"><Calendar className="h-3 w-3" /> {formatDate(op.operationDate || op.jobDate)}</span>
+                    <span className="font-medium flex items-center gap-1"><Calendar className="h-3 w-3" /> {formatDate(op.operationDate)}</span>
                   </div>
                   <div>
                     <span className="text-muted-foreground block text-xs uppercase">{t('Loading Date', 'تاريخ تحميل الحاوية')}</span>
@@ -246,7 +371,7 @@ useEffect(() => {
           </div>
         ))}
 
-        {operations.length === 0 && (
+        {!isLoading && operations.length === 0 && (
           <div className="rounded-xl border-2 border-dashed p-12 text-center mt-6">
             <ClipboardList className="mx-auto h-12 w-12 text-muted-foreground/30" />
             <h3 className="mt-4 text-lg font-semibold">{t('No Operations', 'No Operations')}</h3>
@@ -276,7 +401,6 @@ useEffect(() => {
 
             <div>
               <Label>{t('Link to Job', 'ربط بالعملية')}</Label>
-              {/* تم تنظيف الـ Select من التكرار والتداخل البرمجي بنجاح ✅ */}
               <Select 
                 value={form.jobId || 'none'} 
                 onValueChange={(v) => {
@@ -350,7 +474,7 @@ useEffect(() => {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {form.attachments.map((att, i) => (
                   <div key={att.id} className="flex gap-2 items-center border rounded-lg p-2 bg-muted/20">
-                    {att.url.startsWith('data:image/') ? (
+                    {isImageUrl(att.url) ? (
                       <img src={att.url} className="w-10 h-10 rounded object-cover" />
                     ) : (
                       <div className="w-10 h-10 rounded bg-muted flex flex-shrink-0 items-center justify-center">
@@ -378,7 +502,7 @@ useEffect(() => {
         </DialogContent>
       </Dialog>
 
-      <DeleteConfirmDialog open={deleteOpen} onOpenChange={setDeleteOpen} onConfirm={handleDelete} itemName={deleting?.jobId ? `${t('Operation')} ${deleting.jobId}` : t('Operation')} />
+      <DeleteConfirmDialog open={deleteOpen} onOpenChange={setDeleteOpen} onConfirm={handleDelete} itemName={deleting?.clientName ? `${t('Operation')} - ${deleting.clientName}` : t('Operation')} />
       <FileViewer fileUrl={viewingFile} onClose={() => setViewingFile(null)} />
     </div>
   );

@@ -1,13 +1,13 @@
 import { useState, useCallback, useMemo, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useTranslation } from '../../node_modules/react-i18next';
+import { useTranslation } from 'react-i18next';
 import { PageHeader } from '@/components/PageHeader';
 import { StatCard } from '@/components/StatCard';
 import { DeleteConfirmDialog } from '@/components/DeleteConfirmDialog';
 import {
   getJobs, saveJobs, getSuppliers, getProducts, getContainers, getClients, getTransactions, saveTransactions,
   getShippingAgents, getShipmentOperations, getShippingAgentRecords,
-  generateId, Job, JobProduct, JobAttachment, OperationType, formatCurrency, sumByCurrency, formatBalanceObj, formatDate
+  generateId, Job, JobProduct, JobAttachment, OperationType, formatCurrency, sumByCurrency, formatBalanceObj, formatDate,uploadFileToSupabase
 } from '@/data/store';
 import { compressImage } from '@/utils/imageCompression';
 import { Button } from '@/components/ui/button';
@@ -109,18 +109,41 @@ useEffect(() => {
     setEditOpen(true);
   };
 
-  const openEdit = (j: Job) => {
+ const openEdit = (j: Job) => {
     setEditing(j);
     setForm({
-      title: j.title || '', supplierId: j.supplierId || 'none', clientId: j.clientId || 'none', containerId: j.containerId || 'none',
-      currency: j.currency, paymentDate: j.paymentDate, status: j.status, operationType: j.operationType,
-      invoiceNumber: j.invoiceNumber || '', blNumber: j.blNumber || '', exportCertificate: j.exportCertificate || '', shippingAgent: j.shippingAgent || '', incoterm: j.incoterm || 'none', departurePort: j.departurePort || '', arrivalPort: j.arrivalPort || '', transitTo: j.transitTo || '', packingListUrl: j.packingListUrl || '',
-      isSold: j.isSold || false, discountPercentage: j.discountPercentage || 0, supplierDiscountPercentage: j.supplierDiscountPercentage || 0, rawMaterialPricePerTon: j.rawMaterialPricePerTon || 0, rawMaterialWeight: j.rawMaterialWeight || 0, rawMaterialCost: j.rawMaterialCost || 0, pettyCash: j.pettyCash || 0, otherCostReason: j.otherCostReason || '',
-      numberOfContainers: j.numberOfContainers || (j.containerIds?.length) || (j.containerId && j.containerId !== 'none' ? 1 : ''),
-      containerIds: j.containerIds || (j.containerId && j.containerId !== 'none' ? [j.containerId] : []),
-      notes: j.notes, products: [...j.products], attachments: [...(j.attachments || [])],
+      title: j.title || '', 
+      supplierId: j.supplierId || 'none', 
+      clientId: j.clientId || 'none', 
+      containerId: j.containerId || 'none',
+      currency: j.currency || 'USD', 
+      paymentDate: j.paymentDate || '', 
+      status: j.status || 'active', 
+      operationType: j.operationType || activeTab,
+      invoiceNumber: j.invoiceNumber || '', 
+      blNumber: j.blNumber || '', 
+      exportCertificate: j.exportCertificate || '', 
+      shippingAgent: j.shippingAgent || '', 
+      incoterm: j.incoterm || 'none', 
+      departurePort: j.departurePort || '', 
+      arrivalPort: j.arrivalPort || '', 
+      transitTo: j.transitTo || '', 
+      packingListUrl: j.packingListUrl || '',
+      isSold: j.isSold || false, 
+      discountPercentage: j.discountPercentage !== undefined ? j.discountPercentage : 0, 
+      supplierDiscountPercentage: j.supplierDiscountPercentage !== undefined ? j.supplierDiscountPercentage : 0, 
+      rawMaterialPricePerTon: j.rawMaterialPricePerTon !== undefined ? j.rawMaterialPricePerTon : 0, 
+      rawMaterialWeight: j.rawMaterialWeight !== undefined ? j.rawMaterialWeight : 0, 
+      rawMaterialCost: j.rawMaterialCost !== undefined ? j.rawMaterialCost : 0, 
+      pettyCash: j.pettyCash !== undefined ? j.pettyCash : 0, 
+      otherCostReason: j.otherCostReason || '',
+      numberOfContainers: j.numberOfContainers || (j.containerIds && j.containerIds.length > 0 ? j.containerIds.length : ''),
+      containerIds: j.containerIds && j.containerIds.length > 0 ? j.containerIds : (j.containerId && j.containerId !== 'none' ? [j.containerId] : []),
+      notes: j.notes || '', 
+      products: j.products ? [...j.products] : [], 
+      attachments: j.attachments ? [...j.attachments] : [],
       numberOfReps: j.numberOfReps || '',
-      repNames: [...(j.repNames || [])],
+      repNames: j.repNames ? [...j.repNames] : [],
       createdAt: (j.createdAt || new Date().toISOString()).split('T')[0]
     });
     setEditOpen(true);
@@ -141,50 +164,75 @@ useEffect(() => {
   const removeProductLine = (index: number) => {
     setForm(f => ({ ...f, products: f.products.filter((_, i) => i !== index) }));
   };
+  const removeAttachment = (index: number) => {
+  setForm(f => ({
+    ...f,
+    attachments: (f.attachments || []).filter((_, i) => i !== index)
+  }));
+};
 
+  // 1️⃣ تحديث دالة رفع الصور والمستندات المشتركة
   const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
-      const base64 = await compressImage(e.target.files[0]);
-      setForm(f => ({
-        ...f,
-        attachments: [...(f.attachments || []), { id: generateId(), url: base64, description: '', createdAt: new Date().toISOString() }]
-      }));
+      const originalFile = e.target.files[0];
+      
+      toast.loading("جاري رفع المستند إلى السحابة...", { id: "upload-doc" });
+      
+      // رفع الملف مباشرة إلى سوبابيز من خلال الدالة المركزية بالـ store
+      const publicUrl = await uploadFileToSupabase(originalFile, "attachments");
+      
+      if (publicUrl) {
+        setForm(f => ({
+          ...f,
+          attachments: [...(f.attachments || []), { 
+            id: generateId(), 
+            url: publicUrl, // 👈 حفظ الرابط السحابي المباشر بدلاً من الـ base64
+            description: originalFile.name, 
+            createdAt: new Date().toISOString() 
+          }]
+        }));
+        toast.success("تم رفع المستند بنجاح! ✨", { id: "upload-doc" });
+      } else {
+        toast.error("فشل رفع المستند.", { id: "upload-doc" });
+      }    
     }
     e.target.value = '';
   };
 
+  // 2️⃣ تحديث دالة رفع الـ Packing List
   const handlePackingListUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
-      const base64 = await compressImage(e.target.files[0]);
-      setForm(f => ({ ...f, packingListUrl: base64 }));
+      const originalFile = e.target.files[0];
+
+      toast.loading("جاري رفع بيان التعبئة...", { id: "upload-pl" });
+
+      // رفع الملف إلى سوبابيز
+      const publicUrl = await uploadFileToSupabase(originalFile, "attachments");
+
+      if (publicUrl) {
+        setForm(f => ({ ...f, packingListUrl: publicUrl })); // 👈 حفظ الرابط السحابي
+        toast.success("تم رفع بيان التعبئة بنجاح! 🎉", { id: "upload-pl" });
+      } else {
+        toast.error("فشل رفع بيان التعبئة.", { id: "upload-pl" });
+      }
     }
     e.target.value = '';
-  };
-
-  const removeAttachment = (index: number) => {
-    setForm(f => ({
-      ...f,
-      attachments: (f.attachments || []).filter((_, i) => i !== index)
-    }));
   };
 
   const calcTotal = (prods: { quantity?: string | number; unitPrice?: string | number }[]) => prods.reduce((s, p) => s + (Number(p.quantity) || 0) * (Number(p.unitPrice) || 0), 0);
 
-  const handleSave = () => {
+ const handleSave = () => {
     if (!form.title.trim()) { toast.error('Please enter a job title.'); return; }
-    // Validations based on type removed for flexibility
-    const parsedProducts = form.products.map(p => ({
+    
+    const parsedProducts = (form.products || []).map(p => ({
       ...p,
       quantity: Number(p.quantity) || 0,
       unitPrice: Number(p.unitPrice) || 0,
-      packages: p.packages
+      packages: p.packages ? Number(p.packages) : 0
     }));
+    
     const totalPrice = calcTotal(parsedProducts);
     const calculatedRawMaterialCost = (Number(form.rawMaterialPricePerTon) || 0) * (Number(form.rawMaterialWeight) || 0);
-
-    // Auto-calculate final net values if this job impacts the statement
-    // Total Revenue = totalPrice - (totalPrice * (form.discountPercentage/100))
-    // Total Cost = rawMaterialCost + pettyCash
 
     const finalJobData: Job = {
       ...form,
@@ -200,10 +248,10 @@ useEffect(() => {
       clientId: form.clientId === 'none' ? undefined : form.clientId,
       containerId: form.containerId === 'none' ? undefined : form.containerId,
       numberOfContainers: Number(form.numberOfContainers) || 0,
-      containerIds: form.containerIds,
+      containerIds: form.containerIds && form.containerIds.length > 0 ? form.containerIds : (form.containerId && form.containerId !== 'none' ? [form.containerId] : []),
       totalPrice,
       numberOfReps: Number(form.numberOfReps) || 0,
-      repNames: form.repNames.slice(0, Number(form.numberOfReps) || 0),
+      repNames: form.numberOfReps && Number(form.numberOfReps) > 0 ? form.repNames.slice(0, Number(form.numberOfReps)) : form.repNames,
       createdAt: form.createdAt ? new Date(form.createdAt + 'T12:00:00Z').toISOString() : new Date().toISOString()
     };
 
@@ -211,7 +259,7 @@ useEffect(() => {
     if (editing) {
       updated = jobs.map(j => j.id === editing.id ? finalJobData : j);
 
-      // Synchronize related transaction dates if the Job's creation date changed
+      // مزامنة حقول التواريخ مع الـ Transactions المرتبطة بالوظيفة لمنع تعارض السجلات
       const oldDateOnly = editing.createdAt ? new Date(editing.createdAt).toISOString().split('T')[0] : '';
       const newDateOnly = finalJobData.createdAt.split('T')[0];
 
@@ -235,6 +283,7 @@ useEffect(() => {
       updated = [...jobs, finalJobData];
       toast.success(`"${form.title}" has been created! 🎉`);
     }
+    
     setJobs(updated);
     saveJobs(updated);
     setEditOpen(false);

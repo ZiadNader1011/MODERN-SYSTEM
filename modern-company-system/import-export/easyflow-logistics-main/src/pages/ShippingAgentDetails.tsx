@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef } from 'react';
+import { useState, useMemo, useRef, useCallback } from 'react';
 import { useParams as useRouterParams, useNavigate as useRouterNavigate } from 'react-router-dom';
 import { useTranslation } from '../../node_modules/react-i18next';
 import { 
@@ -59,6 +59,9 @@ export default function ShippingAgentDetails() {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [viewingFile, setViewingFile] = useState<string | null>(null);
+  
+  // 🌟 إضافة State لحفظ الملف الفعلي المرفوع منعاً للـ Base64
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
   if (!agent) {
     return (
@@ -71,6 +74,7 @@ export default function ShippingAgentDetails() {
 
   const openNew = () => {
     setEditing(null);
+    setSelectedFile(null);
     setForm({
       date: new Date().toISOString().slice(0, 10),
       jobId: 'none',
@@ -90,6 +94,7 @@ export default function ShippingAgentDetails() {
 
   const openEdit = (r: ShippingAgentRecord) => {
     setEditing(r);
+    setSelectedFile(null);
     setForm({
       date: r.date,
       jobId: r.jobId || 'none',
@@ -107,57 +112,7 @@ export default function ShippingAgentDetails() {
     setEditOpen(true);
   };
 
-  const handleSave = () => {
-    if (!form.date) { toast.error('Please select a date.'); return; }
-    
-    const record: ShippingAgentRecord = {
-      id: editing ? editing.id : generateId(),
-      agentId: agent.id,
-      jobId: form.jobId === 'none' ? undefined : form.jobId,
-      date: form.date,
-      blNumber: form.blNumber,
-      country: form.country,
-      containerCount: form.containerCount ? parseInt(form.containerCount) : undefined,
-      costEgp: form.costEgp ? parseFloat(form.costEgp) : undefined,
-      costEgpNote: form.costEgpNote,
-      costEuro: form.costEuro ? parseFloat(form.costEuro) : undefined,
-      costEuroNote: form.costEuroNote,
-      costUsd: form.costUsd ? parseFloat(form.costUsd) : undefined,
-      costUsdNote: form.costUsdNote,
-      pdfUrl: form.pdfUrl,
-      createdAt: editing ? editing.createdAt : new Date().toISOString(),
-    };
-
-    let updated: ShippingAgentRecord[];
-    if (editing) {
-      updated = records.map(r => r.id === editing.id ? record : r);
-      toast.success('Record updated!');
-    } else {
-      updated = [...records, record];
-      toast.success('Record added!');
-    }
-    
-    setRecords(updated);
-    saveShippingAgentRecords(updated);
-    
-    setRecords(updated);
-    saveShippingAgentRecords(updated);
-    
-    setEditOpen(false);
-  };
-
-  const handleDelete = () => {
-    if (!deleting) return;
-    const updated = records.filter(r => r.id !== deleting.id);
-    setRecords(updated);
-    saveShippingAgentRecords(updated);
-    setRecords(updated);
-    saveShippingAgentRecords(updated);
-    
-    toast.success('Record removed.');
-    setDeleting(null);
-  };
-
+  // 🚀 تحديث دالة رفع الملفات لتخزين كائن الملف الحقيقي مباشرة
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -168,15 +123,115 @@ export default function ShippingAgentDetails() {
       return;
     }
 
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      if (event.target?.result) {
-        setForm(f => ({ ...f, pdfUrl: event.target!.result as string }));
-        toast.success('File attached to form.');
-      }
-    };
-    reader.readAsDataURL(file);
+    setSelectedFile(file);
+    setForm(f => ({ ...f, pdfUrl: file.name }));
+    toast.success('File attached to form.');
   };
+
+  const handleSave = async () => {
+    if (!form.date) { toast.error('Please select a date.'); return; }
+    
+    try {
+      const formData = new FormData();
+      formData.append('agentId', agent.id);
+      formData.append('date', form.date);
+      formData.append('jobId', form.jobId === 'none' ? '' : form.jobId);
+      formData.append('blNumber', form.blNumber);
+      formData.append('country', form.country);
+      formData.append('containerCount', form.containerCount);
+      formData.append('costEgp', form.costEgp);
+      formData.append('costEgpNote', form.costEgpNote);
+      formData.append('costEuro', form.costEuro);
+      formData.append('costEuroNote', form.costEuroNote);
+      formData.append('costUsd', form.costUsd);
+      formData.append('costUsdNote', form.costUsdNote);
+
+      if (selectedFile) {
+        formData.append('file', selectedFile);
+      } else if (form.pdfUrl) {
+        formData.append('pdfUrl', form.pdfUrl);
+      }
+
+      // 🌐 المزامنة المباشرة مع سيرفر الباك إند عبر الـ API الموحد لملفات السجلات
+      // يرجى تغيير الرابط التابع للـ Record Controller الخاص بك إذا لزم الأمر
+      const baseUrl = `http://localhost:5000/api/shipping-agent-records`;
+      const url = editing ? `${baseUrl}/${editing.id}` : baseUrl;
+      const method = editing ? 'PUT' : 'POST';
+
+      const response = await fetch(url, {
+        method: method,
+        body: formData
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to save record cloud sync');
+      }
+
+      const savedRecord = await response.json();
+
+      const record: ShippingAgentRecord = {
+        id: String(savedRecord.id),
+        agentId: agent.id,
+        jobId: form.jobId === 'none' ? undefined : form.jobId,
+        date: form.date,
+        blNumber: form.blNumber,
+        country: form.country,
+        containerCount: form.containerCount ? parseInt(form.containerCount) : undefined,
+        costEgp: form.costEgp ? parseFloat(form.costEgp) : undefined,
+        costEgpNote: form.costEgpNote,
+        costEuro: form.costEuro ? parseFloat(form.costEuro) : undefined,
+        costEuroNote: form.costEuroNote,
+        costUsd: form.costUsd ? parseFloat(form.costUsd) : undefined,
+        costUsdNote: form.costUsdNote,
+        pdfUrl: savedRecord.pdfUrl || form.pdfUrl,
+        createdAt: editing ? editing.createdAt : new Date().toISOString(),
+      };
+
+      let updated: ShippingAgentRecord[];
+      if (editing) {
+        updated = records.map(r => r.id === editing.id ? record : r);
+        toast.success('Record updated successfully!');
+      } else {
+        updated = [...records, record];
+        toast.success('Record added successfully!');
+      }
+      
+      setRecords(updated);
+      saveShippingAgentRecords(updated);
+      setEditOpen(false);
+      setSelectedFile(null);
+
+    } catch (error: any) {
+      console.error(error);
+      toast.error(error.message || "حدث خطأ أثناء مزامنة سجلات الوكيل مع قاعدة البيانات السحابية");
+    }
+  };
+
+  const handleDelete = useCallback(async () => {
+    if (!deleting) return;
+    try {
+      const response = await fetch(`http://localhost:5000/api/shipping-agent-records/${deleting.id}`, {
+        method: 'DELETE'
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to delete record from cloud');
+      }
+
+      const updated = records.filter(r => r.id !== deleting.id);
+      setRecords(updated);
+      saveShippingAgentRecords(updated);
+      
+      toast.success('Record removed.');
+      setDeleting(null);
+      setDeleteOpen(false);
+    } catch (error: any) {
+      console.error(error);
+      toast.error(error.message || "فشل مسح السجل من السيرفر السحابي");
+    }
+  }, [deleting, records]);
 
   // Calculate totals
   let totalEgp = 0;
@@ -471,7 +526,6 @@ export default function ShippingAgentDetails() {
 
       <DeleteConfirmDialog open={deleteOpen} onOpenChange={setDeleteOpen} onConfirm={handleDelete} itemName="this record" />
 
-      {/* File Viewer Component */}
       <FileViewer fileUrl={viewingFile} onClose={() => setViewingFile(null)} />
     </div>
   );

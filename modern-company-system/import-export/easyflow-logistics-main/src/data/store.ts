@@ -1,14 +1,20 @@
 import axios, { AxiosError, AxiosInstance } from "axios";
 import { toast } from "sonner";
+import { supabase } from "../utils/supabaseClient";
 
 // ============================================================================
-// CONFIG
+// UTILITIES & GENERATORS (تم نقلها للأعلى لتجنب أخطاء الترتيب)
+// ============================================================================
+export function generateId() { 
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); 
+}
+
+// ============================================================================
+// CONFIG (تعديل الرابط ليدعم البيئة السحابية والمحلية معاً)
 // ============================================================================
 
-const BACKEND_URL = import.meta.env.VITE_API_BASE_URL 
-  ? `${import.meta.env.VITE_API_BASE_URL}/api` 
-  : "/api";
-
+// إذا كنت تستخدم Vite، سيقرأ الرابط من ملف الـ .env وفي حال عدم وجوده سيتوجه محلياً لـ localhost
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || (import.meta.env.DEV ? "http://localhost:5000/api" : "/api");
 const api: AxiosInstance = axios.create({
   baseURL: BACKEND_URL,
   timeout: 15000,
@@ -24,7 +30,6 @@ const api: AxiosInstance = axios.create({
 if (typeof window !== "undefined") {
   try {
     const token = localStorage.getItem("token");
-
     if (!token) {
       localStorage.setItem("token", "bypass_token_easyflow_logistics");
     }
@@ -37,14 +42,12 @@ api.interceptors.request.use(
   (config) => {
     try {
       const token = localStorage.getItem("token");
-
       if (token) {
         config.headers.Authorization = `Bearer ${token}`;
       }
     } catch (err) {
       console.error("❌ Token Read Error:", err);
     }
-
     return config;
   },
   (error) => Promise.reject(error)
@@ -59,10 +62,11 @@ api.interceptors.response.use(
       status: error.response?.status,
       data: error.response?.data,
     });
-
     return Promise.reject(error);
   }
 );
+
+// بقية الـ Types الحالية الخاصة بك دون أي تغيير...
 
 // ============================================================================
 // TYPES
@@ -436,7 +440,6 @@ async function initializeStore() {
   isStoreInitialized = true;
 
   const endpoints = Object.keys(globalStoreCache);
-
   for (const endpoint of endpoints) {
     await fetchEndpoint(endpoint);
   }
@@ -492,7 +495,6 @@ function handleOrphanCleanup(endpoint: string, deletedId: string | number) {
     if (!targetData || !Array.isArray(targetData)) return;
 
     globalStoreCache[rule.targetCache] = targetData.map((item: any) => {
-      
       if (item.products && Array.isArray(item.products)) {
         return {
           ...item,
@@ -511,29 +513,48 @@ function handleOrphanCleanup(endpoint: string, deletedId: string | number) {
           ...(rule.nameField ? { [rule.nameField]: rule.fallbackName } : {}) 
         };
       }
-
       return item;
     });
   });
 }
 
 // ============================================================================
-// CRUD HELPERS (خلف الكواليس - ذكي وبدون حظر للـ UI للفرونت إند)
+// CRUD HELPERS (المحرك الرئيسي المطور والمحمي ضد مشاكل Supabase/PostgreSQL)
 // ============================================================================
 
-async function saveLiveAndMutateCache(endpoint: string, payload: any): Promise<void> {
+async function saveLiveAndMutateCache(endpoint: string, payload: any, clientTempId?: string): Promise<void> {
   try {
-    const normalized = normalizeItem(payload);
-    
-    // 1. إرسال البيانات للباك إند الفعلي
-    const res = await api.post(`/${endpoint}`, normalized);
-    const savedItem = normalizeItem(res.data || normalized);
+    const itemToSend = { ...payload };
+    const isNewItem = !itemToSend.id || (clientTempId && clientTempId.length > 10);
 
-    // 2. تحديث الكاش العالمي فوراً بالمعرف الصارم والنهائي من PostgreSQL
+    if (clientTempId && clientTempId.length > 10) {
+      delete itemToSend.id;
+    }
+
+    let res;
+    
+    // 1️⃣ الفحص الذكي: إذا لم يكن عنصراً جديداً، أرسل طلب PUT للتعديل على المسار المخصص
+    if (!isNewItem) {
+      console.log(`📝 Sending PUT request to: /${endpoint}/${itemToSend.id}`);
+      res = await api.put(`/${endpoint}/${itemToSend.id}`, itemToSend);
+    } else {
+      // إذا كان عنصراً جديداً، أرسل طلب POST عادي للإنشاء
+      console.log(`🚀 Sending POST request to: /${endpoint}`);
+      res = await api.post(`/${endpoint}`, itemToSend);
+    }
+
+    const savedItem = normalizeItem(res.data || payload);
+
+    // 2️⃣ تحديث الكاش العالمي بالمعرف النهائي والآمن المستلم من الخادم
     const currentCache = globalStoreCache[endpoint] || [];
-    const index = currentCache.findIndex(
-      (item: any) => item.id === normalized.id || item.id === savedItem.id
-    );
+    
+    let index = -1;
+    if (clientTempId) {
+      index = currentCache.findIndex((item: any) => String(item.id) === String(clientTempId));
+    }
+    if (index === -1) {
+      index = currentCache.findIndex((item: any) => String(item.id) === String(savedItem.id));
+    }
 
     if (index >= 0) {
       globalStoreCache[endpoint][index] = savedItem;
@@ -541,13 +562,14 @@ async function saveLiveAndMutateCache(endpoint: string, payload: any): Promise<v
       globalStoreCache[endpoint].push(savedItem);
     }
 
-    // 3. إعادة جلب تأكيدية سريعة من السيرفر لضمان سلامة الترتيب والمزامنة
+    // 3️⃣ تأمين المزامنة وإعادة الترتيب التلقائي من الخادم
     await fetchEndpoint(endpoint);
-    console.log(`✅ [${endpoint}] Cache updated successfully with real DB ID:`, savedItem.id);
+    console.log(`✅ [${endpoint}] Synced successfully with Server! ID:`, savedItem.id);
 
   } catch (err) {
     console.error(`❌ Background Save Error [${endpoint}]:`, err);
     toast.error("حدث خطأ أثناء مزامنة البيانات وحفظها في قاعدة البيانات السحابية.");
+    await fetchEndpoint(endpoint); // التراجع التلقائي عن الكاش الوهمي في حال الفشل
   }
 }
 
@@ -555,18 +577,23 @@ async function deleteLive(endpoint: string, id: string | number) {
   try {
     if (!id) return false;
 
-    console.log(`🚀 Requesting Delete for: /${endpoint}/${id}`);
+    console.log(`🚀 Requesting Delete from Supabase: /${endpoint}/${id}`);
+    
+    // 1. التحديث الفوري الصارم للكاش المحلي أولاً قبل أي طلب خارجي للحفاظ على استقرار الـ UI
+    globalStoreCache[endpoint] = (globalStoreCache[endpoint] || []).filter((item: any) => String(item.id) !== String(id));
+
+    // 2. إرسال طلب الحذف الحقيقي للسيرفر
     await api.delete(`/${endpoint}/${id}`);
 
     handleOrphanCleanup(endpoint, id);
 
-    // تحديث كافة الجداول للتأكد من اختفاء العلاقات المرتبطة
-    const endpoints = Object.keys(globalStoreCache);
+    // 3. تحديث هادئ لبقية الجداول للتأكد من زوال العلاقات
+    const endpoints = Object.keys(globalStoreCache).filter(ep => ep !== endpoint);
     for (const ep of endpoints) {
       try { await fetchEndpoint(ep); } catch { /** bypass */ }
     }
 
-    toast.success("تم الحذف بنجاح من قاعدة البيانات.");
+    toast.success("تم الحذف بنجاح من قاعدة البيانات السحابية.");
     return true;
 
   } catch (err: any) {
@@ -574,12 +601,12 @@ async function deleteLive(endpoint: string, id: string | number) {
     console.error(`❌ Delete Error [${endpoint}]:`, backendError);
 
     toast.error(backendError, {
-      description: "برجاء مراجعة وحذف العمليات أو المنتجات المرتبطة به أولاً ثم إعادة المحاولة.",
+      description: "برجاء مراجعة وحذف العمليات أو المنتجات المرتبطة به أولاً.",
       duration: 5000,
     });
 
-    // جلب البيانات مجدداً للتراجع عن الحذف الوهمي بالفرونت إند في حال فشل السيرفر
-    await fetchEndpoint(endpoint);
+    // إعادة جلب البيانات فقط في حالة الفشل الحقيقي لإعادة العنصر المرفوض حذفه من قاعدة البيانات
+    await fetchEndpoint(endpoint); 
     return false;
   }
 }
@@ -594,12 +621,7 @@ export function getProducts(): Product[] { return safeArray(globalStoreCache.pro
 export function getContainers(): Container[] { return safeArray(globalStoreCache.containers); }
 export function getJobs(): Job[] { return safeArray(globalStoreCache.jobs); }
 export function getFiles(): UploadedFile[] { return safeArray(globalStoreCache.archive); }
-// مثال لما يجب أن تبدو عليه دوال الجلب لمنع تصفير الكاش
-export function getTransactions(): Transaction[] {
-  const cached = localStorage.getItem('transactions');
-  const localData = cached ? JSON.parse(cached) : [];
-  return localData;
-}
+export function getTransactions(): Transaction[] { return safeArray(globalStoreCache.transactions); }
 export function getShippingAgents(): ShippingAgent[] { return safeArray(globalStoreCache["shipping-agents"]); }
 export function getShippingAgentRecords(): ShippingAgentRecord[] { return safeArray(globalStoreCache["shipping-agent-records"]); }
 export function getEmployees(): Employee[] { return safeArray(globalStoreCache.employees); }
@@ -609,53 +631,66 @@ export function getShipmentOperations(): ShipmentOperation[] { return safeArray(
 export function getBankBalances(): BankBalances { return globalBankCache || {}; }
 
 // ============================================================================
-// SAVERS (CENTRALIZED SMART INTERACTION - FIXED & SAFE)
+// SAVERS (CENTRALIZED SMART INTERACTION - FIXED & STRICT RACE-CONDITION PROOF)
 // ============================================================================
 
 function executeSaveFlow(endpoint: string, newData: any[]) {
-  // إذا كانت المصفوفة القادمة من الفرونت إند غير معرفة، لا تفعل شيئاً
   if (!newData) return false;
 
   const current = globalStoreCache[endpoint] || [];
 
-  // حماية حيوية: إذا كان الكاش يحتوي على بيانات، والفرونت إند أرسل مصفوفة فارغة فجأة أثناء الريفريش، تجاهل الطلب تماماً
+  // 1. الفحص الصارم والذكي لعمليات "الحذف"
+  if (current.length > 0 && newData.length < current.length) {
+    const deleted = current.find((c: any) => !newData.some((n: any) => String(n.id) === String(c.id)));
+    
+    if (deleted?.id) {
+      console.log(`🗑️ Strict Detection of Delete operation for [${endpoint}] ID: ${deleted.id}`);
+      globalStoreCache[endpoint] = current.filter((item: any) => String(item.id) !== String(deleted.id));
+      deleteLive(endpoint, deleted.id);
+      return true; 
+    }
+  }
+
+  // 2. حماية حيوية ضد التصفير العشوائي
   if (current.length > 0 && newData.length === 0) {
     console.warn(`⚠️ Blocked accidental cache wipeout for [${endpoint}] during component mount/refresh.`);
     return true; 
   }
   
-  // 1. فحص ما إذا كانت العملية تهدف فعلياً إلى "الحذف" (بشرط ألا تكون المصفوفة الجديدة فارغة تماماً بشكل مفاجئ)
-  if (current.length > 0 && newData.length < current.length) {
-    const deleted = current.find((c: any) => !newData.some((n: any) => String(n.id) === String(c.id)));
-    if (deleted?.id) {
-      // إزالة العنصر من الكاش المحلي فوراً (Optimistic UI)
-      globalStoreCache[endpoint] = current.filter((item: any) => String(item.id) !== String(deleted.id));
-      deleteLive(endpoint, deleted.id);
-      return true;
+  // 3. الفحص الدقيق لعمليات "الإضافة" أو "التعديل"
+  let targetedItem = null;
+  let isNewItem = false;
+  let clientTempId: string | undefined = undefined;
+
+  const foundNew = newData.find((n: any) => !current.some((c: any) => String(c.id) === String(n.id)));
+  
+  if (foundNew) {
+    targetedItem = foundNew;
+    isNewItem = true;
+    if (String(targetedItem.id).length > 10) {
+      clientTempId = String(targetedItem.id); 
     }
-  }
-
-  // 2. فحص ما إذا كانت العملية "إضافة" أو "تعديل"
-  let targetedItem = newData[newData.length - 1];
-
-  if (current.length === newData.length) {
-    // إذا كانت الأطوال متطابقة، فهذا تعديل (Edit)
-    const changed = newData.find((n: any) => {
+  } else {
+    // ✨ التعديل الذهبي: فحص عميق ومرن يقارن كل الحقول ديناميكياً لتجنب سقوط أي حقل
+    targetedItem = newData.find((n: any) => {
       const old = current.find((c: any) => String(c.id) === String(n.id));
-      return JSON.stringify(old) !== JSON.stringify(n);
+      if (!old) return false;
+      
+      // مقارنة كافة المفاتيح المتواجدة في الكائن الجديد بالقديم لقنص أي اختلاف
+      return Object.keys(n).some(key => {
+        // نغض الطرف عن تاريخ التحديث التلقائي لتجنب الحلقات اللانهائية
+        if (key === 'updatedAt' || key === 'createdAt') return false;
+        return String(old[key]) !== String(n[key]);
+      });
     });
-    if (changed) targetedItem = changed;
   }
 
-  // تحديث الكاش المحلي بالبيانات المنظمة فوراً
-  globalStoreCache[endpoint] = newData.map(normalizeItem);
-
-  // إرسال التحديث للسيرفر فقط إذا كان هناك عنصر مستهدف تمت إضافته أو تعديله بالفعل
-  if (targetedItem && (!targetedItem.id || String(targetedItem.id).length < 10 || !current.some((c: any) => String(c.id) === String(targetedItem.id)))) {
-    saveLiveAndMutateCache(endpoint, targetedItem);
-  } else if (targetedItem) {
-    // في حالة التعديل الصريح
-    saveLiveAndMutateCache(endpoint, targetedItem);
+  if (targetedItem) {
+    globalStoreCache[endpoint] = newData.map(normalizeItem);
+    console.log(`🚀 Dispatching Live Write operation for [${endpoint}] - IsNew: ${isNewItem}`);
+    saveLiveAndMutateCache(endpoint, targetedItem, clientTempId);
+  } else {
+    globalStoreCache[endpoint] = newData.map(normalizeItem);
   }
 
   return true; 
@@ -666,20 +701,7 @@ export function saveClients(d: Client[]) { return executeSaveFlow('clients', d);
 export function saveProducts(d: Product[]) { return executeSaveFlow('products', d); }
 export function saveContainers(d: Container[]) { return executeSaveFlow('containers', d); }
 export function saveJobs(d: Job[]) { return executeSaveFlow('jobs', d); }
-export function saveTransactions(data: Transaction[]) {
-  // 🛡️ شرط الحماية: لو الداتا اللي جاية من السيرفر فارغة، والقديم كان فيه داتا، 
-  // ده معناه Neon لسه بيقوم (Cold Start)، ف نرفض المسح.
-  const cached = localStorage.getItem('transactions');
-  const existingData = cached ? JSON.parse(cached) : [];
-  
-  if ((!data || data.length === 0) && existingData.length > 0) {
-    console.warn("Neon is waking up (Cold Start Mode). Retaining cached financials.");
-    return; // اخرج فوراً بدون مسح الكاش السليم
-  }
-
-  // إذا كانت البيانات طبيعية وسليمة، احفظها عادي
-  localStorage.setItem('transactions', JSON.stringify(data));
-}
+export function saveTransactions(data: Transaction[]) { return executeSaveFlow('transactions', data); }
 export function saveShippingAgents(d: ShippingAgent[]) { return executeSaveFlow('shipping-agents', d); }
 export function saveShippingAgentRecords(d: ShippingAgentRecord[]) { return executeSaveFlow('shipping-agent-records', d); }
 export function saveEmployees(d: Employee[]) { return executeSaveFlow('employees', d); }
@@ -699,14 +721,46 @@ export async function saveBankBalances(d: BankBalances) {
     return false;
   }
 }
+export async function uploadFileToSupabase(file: File, bucketName: string = "attachments"): Promise<string | null> {
+  try {
+    if (!file) return null;
+
+    // 1. تنظيف اسم الملف وتوليد اسم فريد لمنع التداخل والملفات المكررة
+    const fileExt = file.name.split('.').pop();
+    const cleanFileName = `${Date.now()}-${Math.random().toString(36).substring(2, 7)}.${fileExt}`;
+
+    console.log(`📤 Uploading ${file.name} to Supabase bucket: [${bucketName}]...`);
+
+    // 2. الرفع المباشر إلى البكت المستهدف
+    const { data, error } = await supabase.storage
+      .from(bucketName)
+      .upload(cleanFileName, file, {
+        cacheControl: '3600',
+        upsert: false
+      });
+
+    if (error) {
+      throw error;
+    }
+
+    // 3. استخراج الرابط العام والمباشر للملف (Public URL)
+    const { data: { publicUrl } } = supabase.storage
+      .from(bucketName)
+      .getPublicUrl(cleanFileName);
+
+    console.log("✅ Upload successful! Public URL:", publicUrl);
+    return publicUrl;
+
+  } catch (err: any) {
+    console.error("❌ Supabase Upload Error:", err.message || err);
+    toast.error("فشل رفع الملف إلى السحابة: " + (err.message || "خطأ غير معروف"));
+    return null;
+  }
+}
 
 // ============================================================================
 // UTILITIES & MATHEMATICAL HELPERS (NaN Protected)
 // ============================================================================
-
-export function generateId() { 
-  return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); 
-}
 
 export function formatCurrency(amount: number, currency: string) {
   return new Intl.NumberFormat(undefined, { style: 'currency', currency }).format(safeNumber(amount));
