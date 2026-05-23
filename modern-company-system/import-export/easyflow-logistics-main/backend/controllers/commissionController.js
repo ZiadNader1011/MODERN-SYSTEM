@@ -19,10 +19,12 @@ export const getCommissions = async (req, res) => {
 export const createCommission = async (req, res) => {
     try {
         const data = req.body;
+        if (data.id) delete data.id; // حذف الـ id القادم من الفرونت إند فوراً
+
         let attachments = [];
         if (req.files && req.files.length > 0) {
             attachments = req.files.map(file => ({
-                id: Math.random().toString(36).substr(2, 9),
+                id: Math.random().toString(36).substr(2, 9), // يترك للمرفقات فقط
                 url: `${req.protocol}://${req.get('host')}/uploads/commissions/${file.filename}`,
                 description: file.originalname,
                 createdAt: new Date().toISOString()

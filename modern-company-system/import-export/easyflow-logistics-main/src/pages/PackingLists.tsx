@@ -29,56 +29,55 @@ export default function PackingLists() {
   const [packingLists, setPackingLists] = useState<StandalonePackingList[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
-  // 1️⃣ جلب البيانات مباشرة من جدول سوبابيز عند فتح الصفحة
-  const fetchPackingLists = async () => {
-    try {
-      setIsLoading(true);
-      const { data, error } = await supabase
-        .from('packing_lists') // تأكدي من أن اسم الجدول في سوبابيز مطابق تماماً
-        .select('*')
-        .order('date', { ascending: false });
+ const fetchPackingLists = async () => {
+  try {
+    setIsLoading(true);
+    const { data, error } = await supabase
+      .from('packing_lists') 
+      .select('*')
+      .order('date', { ascending: false });
 
-      if (error) throw error;
+    if (error) throw error;
 
-      // تحويل أسماء الأعمدة لتطابق الكود (CamelCase)
-      const formattedData = (data || []).map((row: any) => ({
-        id: row.id,
-        date: row.date,
-     blNumber: row.blNumber,               
-  containerNumber: row.containerNumber, 
-  clientName: row.clientName,          
-  invoiceNumber: row.invoiceNumber,     
-  customRelease: row.customRelease,     
-        note: row.note,
-        dhlNumber: row.dhlNumber,
-        productName: row.product_name,
-        variety: row.variety,
-        grade: row.grade,
-        caliber: row.caliber,
-        packagesQtyKind: row.packages_qty_kind,
-        numberOfPackages: row.number_of_packages,
-        netWeight: row.net_weight,
-        grossWeight: row.gross_weight,
-        shippingAgent: row.shipping_agent,
-        pol: row.pol,
-        pod: row.pod,
-        finalDestination: row.final_destination,
-        shippingDate: row.shipping_date,
-        numberOfContainers: row.number_of_containers,
-        containerNumbers: row.container_numbers || [],
-        numberOfProducts: row.number_of_products,
-        products: row.products || [],
-        attachments: row.attachments || []
-      }));
+    const formattedData = (data || []).map((row: any) => ({
+      id: row.id,
+      date: row.date,
+      // تأكد أن الحقل يقرأ من الاسم الصحيح في سوبابيز (غالباً bl_number)
+      blNumber: row.bl_number || row.blNumber,               
+      containerNumber: row.container_number || row.containerNumber, 
+      clientName: row.client_name || row.clientName,          
+      invoiceNumber: row.invoice_number || row.invoiceNumber,     
+      customRelease: row.custom_release || row.customRelease,     
+      note: row.note,
+      dhlNumber: row.dhl_number || row.dhlNumber,
+      productName: row.product_name,
+      variety: row.variety,
+      grade: row.grade,
+      caliber: row.caliber,
+      packagesQtyKind: row.packages_qty_kind,
+      numberOfPackages: row.number_of_packages,
+      netWeight: row.net_weight,
+      grossWeight: row.gross_weight,
+      shippingAgent: row.shipping_agent,
+      pol: row.pol,
+      pod: row.pod,
+      finalDestination: row.final_destination,
+      shippingDate: row.shipping_date,
+      numberOfContainers: row.number_of_containers,
+      containerNumbers: row.container_numbers || [],
+      numberOfProducts: row.number_of_products,
+      products: row.products || [],
+      attachments: row.attachments || []
+    }));
 
-      setPackingLists(formattedData);
-    } catch (error: any) {
-      console.error('Error fetching packing lists:', error);
-      toast.error('Failed to load packing lists from cloud');
-    } finally {
-      setIsLoading(false);
-    }
-  };
+    setPackingLists(formattedData);
+  } catch (error: any) {
+    console.error('Error fetching packing lists:', error);
+    toast.error('Failed to load packing lists from cloud');
+  } finally {
+    setIsLoading(false);
+  }
+};
 
   useEffect(() => {
     fetchPackingLists();
@@ -211,57 +210,57 @@ export default function PackingLists() {
     }));
   };
 
-  // 2️⃣ دالة الحفظ المعدلة لترسل البيانات مباشرة لقاعدة بيانات سوبابيز
-  const handleSave = async () => {
-    const recordId = editing ? editing.id : generateId();
+ const handleSave = async () => {
+  const recordId = editing ? editing.id : generateId();
 
-    const dbData = {
-      id: recordId,
-      date: form.date,
-    blNumber: form.blNumber,      
-    containerNumber: form.containerNumber, 
-    clientName: form.clientName,   
-    invoiceNumber: form.invoiceNumber, 
-    customRelease: form.customRelease, 
-      note: form.note,
-      dhl_number: form.dhlNumber,
-      product_name: form.productName,
-      variety: form.variety,
-      grade: form.grade,
-      caliber: form.caliber,
-      packages_qty_kind: form.packagesQtyKind,
-      number_of_packages: form.numberOfPackages,
-      net_weight: form.netWeight,
-      gross_weight: form.grossWeight,
-      shipping_agent: form.shippingAgent,
-      pol: form.pol,
-      pod: form.pod,
-      final_destination: form.finalDestination,
-      shipping_date: form.shippingDate,
-      number_of_containers: Number(form.numberOfContainers) || 0,
-      container_numbers: form.containerNumbers.slice(0, Number(form.numberOfContainers) || 0),
-      number_of_products: Number(form.numberOfProducts) || 0,
-      products: form.products.slice(0, Number(form.numberOfProducts) || 0),
-      attachments: form.attachments
-    };
-
-    const savingToast = toast.loading('Saving changes to Supabase Cloud...');
-
-    try {
-      const { error } = await supabase
-        .from('packing_lists')
-        .upsert(dbData, { onConflict: 'id' });
-
-      if (error) throw error;
-
-      toast.success(editing ? 'Packing List updated successfully' : 'Packing List created successfully', { id: savingToast });
-      setEditOpen(false);
-      fetchPackingLists(); // تحديث فوري للقائمة من السيرفر السحابي
-    } catch (error: any) {
-      console.error('Database Save Error:', error);
-      toast.error(`Save failed: ${error.message}`, { id: savingToast });
-    }
+  // تحويل البيانات لتوافق أسماء أعمدة قاعدة البيانات (Snake Case)
+  const dbData = {
+    id: recordId,
+    date: form.date,
+    bl_number: form.blNumber,               // تعديل من blNumber إلى bl_number
+    container_number: form.containerNumber,   // تعديل لتوافق الجدول
+    client_name: form.clientName,            // تعديل لتوافق الجدول
+    invoice_number: form.invoiceNumber,      // تعديل لتوافق الجدول
+    custom_release: form.customRelease,      // تعديل لتوافق الجدول
+    note: form.note,
+    dhl_number: form.dhlNumber,
+    product_name: form.productName,
+    variety: form.variety,
+    grade: form.grade,
+    caliber: form.caliber,
+    packages_qty_kind: form.packagesQtyKind,
+    number_of_packages: form.numberOfPackages,
+    net_weight: form.netWeight,
+    gross_weight: form.grossWeight,
+    shipping_agent: form.shippingAgent,
+    pol: form.pol,
+    pod: form.pod,
+    final_destination: form.finalDestination,
+    shipping_date: form.shippingDate,
+    number_of_containers: Number(form.numberOfContainers) || 0,
+    container_numbers: form.containerNumbers.slice(0, Number(form.numberOfContainers) || 0),
+    number_of_products: Number(form.numberOfProducts) || 0,
+    products: form.products.slice(0, Number(form.numberOfProducts) || 0),
+    attachments: form.attachments
   };
+
+  const savingToast = toast.loading('Saving changes to Supabase Cloud...');
+
+  try {
+    const { error } = await supabase
+      .from('packing_lists')
+      .upsert(dbData, { onConflict: 'id' });
+
+    if (error) throw error;
+
+    toast.success(editing ? 'Packing List updated successfully' : 'Packing List created successfully', { id: savingToast });
+    setEditOpen(false);
+    fetchPackingLists(); 
+  } catch (error: any) {
+    console.error('Database Save Error:', error);
+    toast.error(`Save failed: ${error.message}`, { id: savingToast });
+  }
+};
 
   // 3️⃣ دالة الحذف المعدلة لمسح السجل من قاعدة البيانات السحابية
   const handleDelete = async () => {

@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { useTranslation } from 'react-i18next'; // تم إصلاح المسار هنا لـ Vercel
+import { useTranslation } from 'react-i18next';
 import { PageHeader } from '@/components/PageHeader';
 import { DeleteConfirmDialog } from '@/components/DeleteConfirmDialog';
 import { generateId, Commission, formatDate, formatCurrency } from '@/data/store';
@@ -27,16 +27,15 @@ export default function Commissions() {
   const [commissions, setCommissions] = useState<Commission[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // جلب البيانات مباشرة من Supabase عند تحميل الصفحة
+  const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+
+  // جلب البيانات عبر الـ API لتوحيد مصدر البيانات ومنع الـ RLS Block
   const fetchCommissions = async () => {
     try {
       setLoading(true);
-      const { data, error } = await supabase
-        .from('commissions')
-        .select('*')
-        .order('date', { ascending: false });
-
-      if (error) throw error;
+      const response = await fetch(`${API_URL}/commissions`);
+      if (!response.ok) throw new Error('Failed to fetch from server');
+      const data = await response.json();
       setCommissions(data || []);
     } catch (error: any) {
       console.error('Error fetching commissions:', error);
@@ -178,18 +177,18 @@ export default function Commissions() {
     }
   };
 
-  // حفظ وتعديل البيانات مباشرة في الـ Database الخاصة بـ Supabase
+  // حفظ وتعديل البيانات عبر الـ API
   const handleSave = async () => {
     if (!form.clientName || !form.date) {
       toast.error('Please fill in all required fields');
       return;
     }
 
-    const savingToast = toast.loading('Saving data to cloud...');
+    const savingToast = toast.loading('Saving data...');
     const totalQty = Number(form.totalQuantityTon) || 0;
     const commPerTon = Number(form.commissionPerTon) || 0;
 
-    const cData = {
+    const cData: any = {
       clientName: form.clientName,
       date: form.date,
       trader: form.trader,
@@ -199,53 +198,58 @@ export default function Commissions() {
       totalQuantityTon: totalQty,
       commissionPerTon: commPerTon,
       currency: form.currency,
-      attachments: form.attachments
+      attachments: form.attachments // إرسالها كمصفوفة طبيعية جاهزة للباك إند
     };
     
     try {
+      let response;
+
       if (editing) {
-        // تحديث سجل موجود
-        const { error } = await supabase
-          .from('commissions')
-          .update(cData)
-          .eq('id', editing.id);
-
-        if (error) throw error;
-        toast.success('Commission updated successfully', { id: savingToast });
+        response = await fetch(`${API_URL}/commissions/${editing.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(cData)
+        });
       } else {
-        // إضافة سجل جديد
-        const { error } = await supabase
-          .from('commissions')
-          .insert([cData]);
+        response = await fetch(`${API_URL}/commissions`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(cData)
+        });
+      }
 
-        if (error) throw error;
-        toast.success('Commission created successfully', { id: savingToast });
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to save');
       }
       
+      toast.success(editing ? 'Commission updated successfully' : 'Commission created successfully', { id: savingToast });
       setEditOpen(false);
-      fetchCommissions(); // إعادة تحديث القائمة من السيرفر
+      fetchCommissions(); 
     } catch (error: any) {
       console.error('Error saving:', error);
       toast.error(`Save failed: ${error.message}`, { id: savingToast });
     }
   };
 
-  // حذف السجل مباشرة من الـ Database الخاصة بـ Supabase
+  // حذف السجل عبر الـ API
   const handleDelete = async () => {
     if (!deleting) return;
     const deletingToast = toast.loading('Removing record...');
     
     try {
-      const { error } = await supabase
-        .from('commissions')
-        .delete()
-        .eq('id', deleting.id);
+      const response = await fetch(`${API_URL}/commissions/${deleting.id}`, {
+        method: 'DELETE'
+      });
 
-      if (error) throw error;
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Delete failed');
+      }
 
       toast.success('Commission removed', { id: deletingToast });
       setDeleting(null);
-      fetchCommissions(); // تحديث القائمة
+      fetchCommissions(); 
     } catch (error: any) {
       console.error('Error deleting:', error);
       toast.error(`Delete failed: ${error.message}`, { id: deletingToast });
@@ -268,7 +272,7 @@ export default function Commissions() {
 
       <div className="space-y-4">
         {loading ? (
-          <div className="text-center py-10 text-muted-foreground animate-pulse">Loading commissions from Supabase...</div>
+          <div className="text-center py-10 text-muted-foreground animate-pulse">Loading commissions from server...</div>
         ) : commissions.map(c => {
           const totalComm = c.totalQuantityTon * c.commissionPerTon;
           

@@ -4,13 +4,12 @@ import path from 'path';
 
 const getFileUrl = (req, filename) => `${req.protocol}://${req.get('host')}/uploads/operations/${filename}`;
 
-export const getOperations = async (req, res) => {
+export const getOperations = async (req, res, next) => { // أضفنا next هنا
     try {
         const operations = await prisma.shipmentOperation.findMany({
             orderBy: { operationDate: 'desc' },
         });
         
-        // التأكد من أن المرفقات تعود كـ Array حقيقي ومطابقة المعرف النصي
         const formatted = operations.map(op => ({
             ...op,
             id: String(op.id),
@@ -19,7 +18,8 @@ export const getOperations = async (req, res) => {
         
         return res.status(200).json(formatted);
     } catch (error) {
-        return res.status(500).json({ error: "Internal Server Error" });
+        console.error("🚨 Detailed GET Operations Error:", error);
+        next(error); // 👈 هذا سيمرر الخطأ الحقيقي لـ Vercel Logs بدلاً من إرجاع 500 مبهمة
     }
 };
 
@@ -27,10 +27,13 @@ export const createOperation = async (req, res) => {
     try {
         const data = req.body;
         
+        // تنظيف ومنع الـ id القادم من الفرونت إند لعدم ضرب الـ Integer في الداتابيز
+        if (data.id) delete data.id; 
+
         // 1. معالجة الـ Job ID
         const finalJobId = (data.jobId === 'none' || !data.jobId || data.jobId === "") ? null : parseInt(data.jobId);
 
-        // 2. معالجة المرفقات الجديدة
+        // 2. معالجة المرفقات الجديدة (تترك الـ id هنا لأنه داخل مصفوفة المرفقات وليس السجل)
         const newAttachments = (req.files || []).map(file => ({
             id: Math.random().toString(36).substr(2, 9),
             url: getFileUrl(req, file.filename),
@@ -51,7 +54,7 @@ export const createOperation = async (req, res) => {
                 responsiblePerson: data.responsiblePerson || null,
                 qualityRepresentative: data.qualityRepresentative || null,
                 notes: data.notes || null,
-                attachments: newAttachments, // حفظ المصفوفة مباشرة
+                attachments: newAttachments, 
                 numberOfContainers: data.numberOfContainers ? data.numberOfContainers.toString() : "0",
             }
         });
@@ -126,21 +129,23 @@ export const updateOperation = async (req, res) => {
     }
 };
 
-export const deleteOperation = async (req, res) => {
+export const deleteOperation = async (req, res, next) => {
     try {
         const numericId = parseInt(req.params.id);
         const record = await prisma.shipmentOperation.findUnique({ where: { id: numericId } });
         
         if (!record) return res.status(404).json({ error: "Record not found" });
 
-        // مسح الملفات الفيزيائية من السيرفر
-        if (record.attachments && Array.isArray(record.attachments)) {
+        const isProduction = process.env.NODE_ENV === 'production' || process.env.VERCEL === '1';
+
+        // مسح الملفات الفيزيائية يتم فقط إذا كنا في بيئة التطوير المحلية
+        if (!isProduction && record.attachments && Array.isArray(record.attachments)) {
             for (const file of record.attachments) {
                 try {
                     const filename = file.url.split('/').pop();
                     const filePath = path.join(process.cwd(), 'uploads/operations', filename);
                     await fs.unlink(filePath);
-                } catch (err) { /* تجاهل لو الملف غير موجود أصلاً */ }
+                } catch (err) { /* تجاهل الفشل */ }
             }
         }
 
@@ -148,6 +153,6 @@ export const deleteOperation = async (req, res) => {
         return res.status(200).json({ success: true });
     } catch (error) {
         console.error("❌ Delete Error:", error);
-        return res.status(500).json({ error: "Delete failed" });
+        next(error);
     }
 };

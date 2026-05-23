@@ -1,12 +1,11 @@
 import { prisma } from '../lib/prisma.js';
 
-export const getPackingLists = async (req, res) => {
+export const getPackingLists = async (req, res, next) => { // أضفنا next هنا
     try {
         const lists = await prisma.packingList.findMany({
             orderBy: { createdAt: 'desc' }
         });
         
-        // تحويل المعرفات لنصوص لإرضاء كاش الفرونت إند تماماً
         const formatted = lists.map(list => ({
             ...list,
             id: String(list.id),
@@ -18,13 +17,15 @@ export const getPackingLists = async (req, res) => {
         return res.status(200).json(formatted);
     } catch (error) {
         console.error("❌ Fetch PackingLists Error:", error);
-        return res.status(500).json({ error: "Internal Server Error" });
+        // مرر الخطأ للـ Middleware المركزي لكي يطبعه بوضوح في الـ Logs
+        next(error); 
     }
 };
 
 export const createPackingList = async (req, res) => {
     try {
         const data = req.body;
+        if (data.id) delete data.id; // تنظيف الـ id
 
         const newUploadedFiles = (req.files || []).map(file => ({
             id: Math.random().toString(36).substr(2, 9),
@@ -55,7 +56,7 @@ export const createPackingList = async (req, res) => {
                 numberOfContainers: parseInt(data.numberOfContainers) || 0,
                 numberOfProducts: parseInt(data.numberOfProducts) || 0,
                 containerNumbers,
-                products,
+                products, // يتم حفظ مصفوفة المنتجات (وبداخلها الـ caliber) كـ JSON داخل هذا الحقل
                 attachments: finalAttachments 
             }
         });
