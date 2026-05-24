@@ -296,7 +296,7 @@ setTransactions(prev => {
     );
   }
 
-  const handleAddRecord = async () => {
+ const handleAddRecord = async () => {
     const numericSupplierId = id ? parseInt(id, 10) : null;
     if (!numericSupplierId || isNaN(numericSupplierId)) {
       toast.error("Invalid Supplier ID");
@@ -310,18 +310,19 @@ setTransactions(prev => {
 
     const numericRecordJobId = newRecordJobId && newRecordJobId !== 'none' ? parseInt(newRecordJobId, 10) : null;
 
+    // ✅ التعديل هنا: إرسال الحقول بالأسماء المتوافقة مع السيرفر وقاعدة البيانات
     const newTxPayload = {
-      entity_id: numericSupplierId,
-      related_id: numericRecordJobId, 
+      supplierId: numericSupplierId,   // تم التعديل من entity_id إلى supplierId
+      jobId: numericRecordJobId,       // تم التعديل من related_id إلى jobId
       type: 'outgoing', 
       amount: Number(newRecordAmount),
       currency: newRecordCurrency,
       date: newRecordDate, 
       description: newRecordDesc || 'Payment Given',
-      bl_number: '-',
-      weight_in_tons: 0,
-      price_per_ton: 0,
-      other_cost: 0
+      blNumber: '-',                   // تحويل الحقل إلى CamelCase أيضاً احتياطاً
+      weightInTons: 0,                 // تحويل الحقل إلى CamelCase أيضاً احتياطاً
+      pricePerTon: 0,                  // تحويل الحقل إلى CamelCase أيضاً احتياطاً
+      otherCost: 0                     // تحويل الحقل إلى CamelCase أيضاً احتياطاً
     };
 
     try {
@@ -332,13 +333,12 @@ setTransactions(prev => {
         setNewRecordAmount('');
         setNewRecordDesc('');
         setNewRecordJobId('none');
-        await fetchTxs();
+        await fetchTxs(); // تحديث الجدول فوراً بعد الإضافة الإيجابية
       }
     } catch (error) {
       toast.error("Failed to save record to backend");
     }
   };
-
   const totalBalanceObj: Record<string, number> = {};
   const totalPaymentsObj: Record<string, number> = {};
   const totalCostObj: Record<string, number> = {};
