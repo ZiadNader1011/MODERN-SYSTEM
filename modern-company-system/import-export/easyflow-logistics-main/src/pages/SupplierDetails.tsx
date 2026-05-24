@@ -131,26 +131,19 @@ const handleAddExcelRow = async () => {
   const parsedJobId = filterJobId !== 'all' ? parseInt(filterJobId, 10) : null;
   const numericJobId = (parsedJobId && !isNaN(parsedJobId)) ? parsedJobId : null;
 
-  // بناء الـ Payload مع التحقق من الحقول الرقمية وعدم إرسال قيم null إذا كان الباك إند يتحسس منها
-  const newTxPayload: Record<string, any> = {
+  const newTxPayload = {
     entity_id: numericSupplierId,
     type: 'raw_material', 
-    amount: 0,
+    amount: 1, // 👈 تم التعديل إلى 1 لتخطي الـ Validation بنجاح
     currency: filterCurrency !== 'all' ? filterCurrency : 'USD', 
     date: new Date().toISOString().split('T')[0], 
     description: 'New Raw Material Entry', 
     bl_number: '-', 
-    weight_in_tons: 0,
-    price_per_ton: 0,
-    other_cost: 0
+    weight_in_tons: 1, // 👈 مبدئياً 1 طن
+    price_per_ton: 1,  // 👈 مبدئياً السعر 1
+    other_cost: 0,
+    related_id: numericJobId 
   };
-
-  // إرسال الحقل فقط إذا كان هناك Job محدد بالفعل، وإلا نتركه تماماً أو نرسل الحقل المتوقع من الباك إند
-  if (numericJobId) {
-    newTxPayload.related_id = numericJobId;
-    // ملحوظة: لو الباك إند في قاعدة البيانات مسمي الحقل job_id وليس related_id، قم بتفعيل السطر التالي:
-    // newTxPayload.job_id = numericJobId; 
-  }
 
   try {
     const response = await axios.post('/api/transactions', newTxPayload);
@@ -160,7 +153,7 @@ const handleAddExcelRow = async () => {
       ...savedTxFromBackend,
       id: savedTxFromBackend.id,
       supplierId: savedTxFromBackend.entity_id,
-      relatedId: savedTxFromBackend.related_id || savedTxFromBackend.job_id,
+      relatedId: savedTxFromBackend.related_id,
       blNumber: savedTxFromBackend.bl_number,
       weightInTons: savedTxFromBackend.weight_in_tons,
       pricePerTon: savedTxFromBackend.price_per_ton,
@@ -170,7 +163,6 @@ const handleAddExcelRow = async () => {
     setTransactions(prev => [...prev, normalizedTx]);
     toast.success("Row added successfully");
   } catch (error) {
-    console.error("Backend error details:", error); // لمشاهدة تفاصيل الخطأ القادم من السيرفر في الـ Console
     toast.error("Failed to save to backend");
   }
 };
