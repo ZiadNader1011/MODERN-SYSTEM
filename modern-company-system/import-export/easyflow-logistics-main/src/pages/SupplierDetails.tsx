@@ -76,7 +76,7 @@ export default function SupplierDetails() {
 
   const fetchTxs = async () => {
     try {
-      const res = await axios.get('/api/transactions');
+      const res = await axios.get('/transactions');
       setTransactions(res.data);
     } catch (err) {
       setTransactions(getTransactions());
@@ -128,7 +128,7 @@ const handleAddExcelRow = async () => {
 };
 
     try {
-      const response = await axios.post('/api/transactions', newTxPayload);
+      const response = await axios.post('/transactions', newTxPayload);
       
       if (response.status === 201 || response.status === 200) {
         toast.success("Row added successfully");
@@ -209,7 +209,7 @@ setTransactions(prev => {
 
     if (!payloadToSend) return;
     try {
-      await axios.put(`/api/transactions/${txId}`, payloadToSend);
+      await axios.put(`/transactions/${txId}`, payloadToSend);
     } catch (error) {
       toast.error("Failed to update on server. Reverting...");
       if (previousTransactions.length > 0) {
@@ -227,7 +227,7 @@ setTransactions(prev => {
     });
 
     try {
-      await axios.delete(`/api/transactions/${txId}`);
+      await axios.delete(`/transactions/${txId}`);
       toast.success("Row deleted successfully");
     } catch (error) {
       toast.error("Failed to delete from server");
@@ -347,7 +347,7 @@ setTransactions(prev => {
     };
 
     try {
-      const response = await axios.post('/api/transactions', newTxPayload);
+      const response = await axios.post('/transactions', newTxPayload);
       console.log(response.data);
       if (response.status === 201 || response.status === 200) {
         setIsAddRecordOpen(false);
