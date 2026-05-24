@@ -120,22 +120,36 @@ export default function SupplierDetails() {
   const [newRecordCurrency, setNewRecordCurrency] = useState('USD');
   const [newRecordDate, setNewRecordDate] = useState(new Date().toISOString().split('T')[0]);
 
-  const handleAddExcelRow = () => {
-    const newTx: Transaction = {
-      id: generateId(),
-      relatedId: id || '', 
-      entityId: id,
-      type: 'raw_material',
+const handleAddExcelRow = () => {
+    // تحويل الـ id القادم من الرابط إلى رقم لأن الـ Prisma ينتظر Int لقاعدة البيانات
+    const numericSupplierId = id ? parseInt(id, 10) : null;
+
+    if (!numericSupplierId || isNaN(numericSupplierId)) {
+      toast.error("Invalid Supplier ID");
+      return;
+    }
+
+    const newTx: any = {
+      id: generateId(), // معرف فريد مؤقت للفرونت إند
+      relatedId: String(numericSupplierId), // النظام القديم
+      
+      // الحقول الرقمية الصريحة المتوافقة مع Prisma Schema الجديدة:
+      supplierId: numericSupplierId, 
+      clientId: null,
+      jobId: null,
+
+      type: 'raw_material', // مدعومة الآن في التعليقات داخل السيرفر
       amount: 0,
-      currency: 'USD',
-      date: new Date().toISOString().slice(0,10),
-      description: '',
+      currency: filterCurrency !== 'all' ? filterCurrency : 'USD',
+      date: new Date().toISOString().split('T')[0], // صيغة YYYY-MM-DD النظيفة
+      description: 'New Raw Material Entry', 
+      blNumber: '-', 
       weightInTons: 0,
       pricePerTon: 0,
       otherCost: 0,
-      blNumber: '',
       createdAt: new Date().toISOString()
     };
+
     const updated = [...transactions, newTx];
     saveTransactions(updated);
     setTransactions(updated);

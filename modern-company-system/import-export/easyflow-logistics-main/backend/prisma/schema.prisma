@@ -64,6 +64,8 @@ model Transaction {
   invoiceNumber String?
   weightInTons  Float?
   packages      Int?
+  pricePerTon    Float?
+  otherCost      Float?
 
   // معرفات العلاقات الرقمية الصريحة لمنع كراشات التحويل
   clientId      Int?
