@@ -5,7 +5,7 @@ import { toast } from 'sonner';
 
 import { formatDate, formatBalanceObj, Job, Transaction } from '@/data/store'; 
 import { Button } from '@/components/ui/button';
-import { ArrowLeft, Printer, Plus, Trash2, Loader2 } from 'lucide-react';
+import { ArrowLeft, Printer, Plus, Trash2, Loader2, Pencil } from 'lucide-react'; // 🔹 أضفنا Pencil هنا
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { DatePicker } from '@/components/DatePicker';
 import { ClientInvoicePrintForm } from '@/components/ClientInvoicePrintForm';
@@ -85,7 +85,6 @@ export default function ClientDetails() {
       try {
         setLoading(true);
         
-        // 🔹 تعديل هنا: تم تغيير اسم جدول الحركات إلى 'transactions' كما هو بالـ Database
         const [clientRes, jobsRes, txsRes, productsRes] = await Promise.all([
           supabase.from('Client').select('*').eq('id', id).maybeSingle(),
           supabase.from('Job').select('*').eq('clientId', id), 
@@ -131,7 +130,6 @@ export default function ClientDetails() {
       incoterm: ''
     };
 
-    // 🔹 تعديل هنا: 'transactions'
     const { data, error } = await supabase
       .from('transactions')
       .insert([newTx])
@@ -171,7 +169,6 @@ export default function ClientDetails() {
       updatePayload.amount = w * p;
     }
 
-    // 🔹 تعديل هنا: 'transactions'
     const { error } = await supabase
       .from('transactions')
       .update(updatePayload)
@@ -185,7 +182,6 @@ export default function ClientDetails() {
   };
 
   const handleDeleteTx = async (txId: string) => {
-    // 🔹 تعديل هنا: 'transactions'
     const { error } = await supabase
       .from('transactions')
       .delete()
@@ -213,9 +209,9 @@ export default function ClientDetails() {
       date: t.date,
       description: t.description,
       relatedId: t.related_id,
-      blNumber: t.bl_number,
-      weightInTons: t.weight_in_tons,
-      pricePerTon: t.price_per_ton,
+      bl_number: t.bl_number, 
+      weight_in_tons: t.weight_in_tons, 
+      price_per_ton: t.price_per_ton,   
       variety: t.variety,
       caliber: t.caliber,
       grade: t.grade,
@@ -239,11 +235,10 @@ export default function ClientDetails() {
               type: 'raw_material',
               amount: finalVal,
               currency: c,
-              date: job.createdAt,
               description: `Auto Job Sales: ${job.title} - ${allProducts.find(prod => prod.id === p.productId)?.name || 'Product'}`,
-              weightInTons: p.quantity,
-              pricePerTon: p.unitPrice,
-              blNumber: job.blNumber || '',
+              weight_in_tons: p.quantity,
+              price_per_ton: p.unitPrice,
+              bl_number: job.blNumber || '',
               variety: p.variety || '',
               caliber: p.caliber || '',
               grade: p.grade || '',
@@ -263,9 +258,9 @@ export default function ClientDetails() {
           currency: job.currency,
           date: job.createdAt,
           description: `Auto Job Sales: ${job.title}`,
-          weightInTons: 0,
-          pricePerTon: 0,
-          blNumber: job.blNumber || '',
+          weight_in_tons: 0,
+          price_per_ton: 0,
+          bl_number: job.blNumber || '',
           variety: '',
           caliber: '',
           grade: '',
@@ -416,7 +411,7 @@ export default function ClientDetails() {
                 <th className="px-4 py-3 text-right font-medium text-muted-foreground w-28">Price / Ton</th>
                 <th className="px-4 py-3 text-right font-medium text-muted-foreground w-32">Total Value (Debit)</th>
                 <th className="px-4 py-3 text-right font-medium text-muted-foreground w-32">Payment Rcvd (Credit)</th>
-                <th className="px-4 py-3 text-center font-medium text-muted-foreground w-16"></th>
+                <th className="px-4 py-3 text-center font-medium text-muted-foreground w-24">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y">
@@ -454,7 +449,7 @@ export default function ClientDetails() {
                         {tx.isAuto ? <span className="text-xs text-muted-foreground">{tx.variety}</span> : <EditableCell type="text" value={tx.variety} onSave={(v) => handleTxUpdate(tx.id, 'variety', v)} placeholder="Variety" className="w-16 text-xs bg-transparent" />}
                       </td>
                       <td className="px-4 py-2">
-                        {tx.isAuto ? <span className="text-xs text-muted-foreground">{tx.caliber}</span> : <EditableCell type="text" value={tx.caliber} onSave={(v) => handleTxUpdate(tx.id, 'caliber', v)} placeholder="Caliber" className="w-16 text-xs bg-transparent" />}
+                        {tx.isAuto ? <span className="text-xs text-muted-foreground">{tx.caliber}</span> : <EditableCell type="text" value={tx.caliber} onSave={(v) => handleTxUpdate(tx.id, 'variety', v)} placeholder="Caliber" className="w-16 text-xs bg-transparent" />}
                       </td>
                       <td className="px-4 py-2">
                         {tx.isAuto ? <span className="text-xs text-muted-foreground">{tx.grade}</span> : <EditableCell type="text" value={tx.grade} onSave={(v) => handleTxUpdate(tx.id, 'grade', v)} placeholder="Grade" className="w-16 text-xs bg-transparent" />}
@@ -513,11 +508,27 @@ export default function ClientDetails() {
                           <Button variant="ghost" size="sm" className="h-8 text-xs text-muted-foreground hover:text-green-600" onClick={() => handleTxUpdate(tx.id, 'type', 'incoming')}>Set Payment</Button>
                         )}
                       </td>
+                      {/* 🔹 العمود الخاص بالأكشن تم تعديله هنا لإضافة زر التعديل (القلم) */}
                       <td className="px-4 py-2 text-center no-print">
                         <div className="flex items-center justify-center gap-1">
+                          {/* زر الطباعة */}
                           <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-primary" onClick={() => printRow(tx)}>
                             <Printer className="h-4 w-4" />
                           </Button>
+                          
+                          {/* زر التعديل (يظهر للسطور اليدوية فقط) */}
+                          {!tx.isAuto && (
+                            <Button 
+                              variant="ghost" 
+                              size="icon" 
+                              className="h-8 w-8 text-muted-foreground hover:text-amber-600"
+                              onClick={() => toast.info('يمكنك تعديل أي خانة في هذا السطر مباشرة من الجدول!')}
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </Button>
+                          )}
+
+                          {/* زر الحذف */}
                           {!tx.isAuto && (
                             <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" onClick={() => handleDeleteTx(tx.id)}>
                               <Trash2 className="h-4 w-4" />

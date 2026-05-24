@@ -120,52 +120,52 @@ export default function SupplierDetails() {
   const [newRecordCurrency, setNewRecordCurrency] = useState('USD');
   const [newRecordDate, setNewRecordDate] = useState(new Date().toISOString().split('T')[0]);
 
-const handleAddExcelRow = async () => {
-  const numericSupplierId = id ? parseInt(id, 10) : null;
+  const handleAddExcelRow = async () => {
+    const numericSupplierId = id ? parseInt(id, 10) : null;
 
-  if (!numericSupplierId || isNaN(numericSupplierId)) {
-    toast.error("Invalid Supplier ID");
-    return;
-  }
+    if (!numericSupplierId || isNaN(numericSupplierId)) {
+      toast.error("Invalid Supplier ID");
+      return;
+    }
 
-  const parsedJobId = filterJobId !== 'all' ? parseInt(filterJobId, 10) : null;
-  const numericJobId = (parsedJobId && !isNaN(parsedJobId)) ? parsedJobId : null;
+    const parsedJobId = filterJobId !== 'all' ? parseInt(filterJobId, 10) : null;
+    const numericJobId = (parsedJobId && !isNaN(parsedJobId)) ? parsedJobId : null;
 
-  const newTxPayload = {
-    entity_id: numericSupplierId,
-    type: 'raw_material', 
-    amount: 1, // 👈 تم التعديل إلى 1 لتخطي الـ Validation بنجاح
-    currency: filterCurrency !== 'all' ? filterCurrency : 'USD', 
-    date: new Date().toISOString().split('T')[0], 
-    description: 'New Raw Material Entry', 
-    bl_number: '-', 
-    weight_in_tons: 1, // 👈 مبدئياً 1 طن
-    price_per_ton: 1,  // 👈 مبدئياً السعر 1
-    other_cost: 0,
-    related_id: numericJobId 
-  };
-
-  try {
-    const response = await axios.post('/api/transactions', newTxPayload);
-    const savedTxFromBackend = response.data; 
-
-    const normalizedTx = {
-      ...savedTxFromBackend,
-      id: savedTxFromBackend.id,
-      supplierId: savedTxFromBackend.entity_id,
-      relatedId: savedTxFromBackend.related_id,
-      blNumber: savedTxFromBackend.bl_number,
-      weightInTons: savedTxFromBackend.weight_in_tons,
-      pricePerTon: savedTxFromBackend.price_per_ton,
-      otherCost: savedTxFromBackend.other_cost
+    const newTxPayload = {
+      entity_id: numericSupplierId,
+      type: 'raw_material', 
+      amount: 1, 
+      currency: filterCurrency !== 'all' ? filterCurrency : 'USD', 
+      date: new Date().toISOString().split('T')[0], 
+      description: 'New Raw Material Entry', 
+      bl_number: '-', 
+      weight_in_tons: 1, 
+      price_per_ton: 1,  
+      other_cost: 0,
+      related_id: numericJobId 
     };
 
-    setTransactions(prev => [...prev, normalizedTx]);
-    toast.success("Row added successfully");
-  } catch (error) {
-    toast.error("Failed to save to backend");
-  }
-};
+    try {
+      const response = await axios.post('/api/transactions', newTxPayload);
+      const savedTxFromBackend = response.data; 
+
+      const normalizedTx = {
+        ...savedTxFromBackend,
+        id: savedTxFromBackend.id,
+        supplierId: savedTxFromBackend.entity_id,
+        relatedId: savedTxFromBackend.related_id,
+        blNumber: savedTxFromBackend.bl_number,
+        weightInTons: savedTxFromBackend.weight_in_tons,
+        pricePerTon: savedTxFromBackend.price_per_ton,
+        otherCost: savedTxFromBackend.other_cost
+      };
+
+      setTransactions(prev => [...prev, normalizedTx]);
+      toast.success("Row added successfully");
+    } catch (error) {
+      toast.error("Failed to save to backend");
+    }
+  };
 
   const handleTxUpdate = async (txId: string | number, field: keyof Transaction, value: any) => {
     const numericSupplierId = id ? parseInt(id, 10) : null;
@@ -181,6 +181,7 @@ const handleAddExcelRow = async () => {
           jobId: (t as any).jobId || (t.relatedId && t.relatedId !== id ? parseInt(t.relatedId, 10) : null)
         };
 
+        // تحديث الحسابات التلقائية بناءً على الوزن والسعر
         if (field === 'weightInTons' || field === 'pricePerTon') {
           newT.amount = (Number(newT.weightInTons) || 0) * (Number(newT.pricePerTon) || 0);
         }
@@ -191,7 +192,6 @@ const handleAddExcelRow = async () => {
     });
     setTransactions(updated);
 
-    // 🔹 تعديل هنا: خريطة تحويل المسميات عند التحديث للسيرفر
     const dbFieldsMap: Record<string, string> = {
       date: 'date',
       description: 'description',
@@ -208,10 +208,18 @@ const handleAddExcelRow = async () => {
     const dbField = dbFieldsMap[field as string] || (field as string);
 
     try {
+      // 💡 تم تعديل الـ payload ليرسل البيانات متوافقة بالكامل مع الـ Backend
       await axios.put(`/api/transactions/${txId}`, {
         [dbField]: value,
-        amount: targetTx.amount 
+        amount: targetTx.amount,
+        type: targetTx.type, // يضمن إرسال النوع المحدث في حال تم تغييره من الأزرار
+        related_id: targetTx.relatedId ? parseInt(targetTx.relatedId, 10) : null,
+        bl_number: targetTx.blNumber || '-',
+        weight_in_tons: Number(targetTx.weightInTons) || 0,
+        price_per_ton: Number(targetTx.pricePerTon) || 0,
+        other_cost: Number(targetTx.otherCost) || 0
       });
+      toast.success("Updated successfully");
     } catch (error) {
       toast.error("Failed to update on server");
       setTransactions(previousTransactions);
@@ -241,7 +249,6 @@ const handleAddExcelRow = async () => {
     const manualTxs = transactions.filter(t => {
       if (t.type === 'discount') return false;
       
-      // التوافق مع الحقول القادمة من السيرفر كـ snake_case أو كود الفرونت الحالي
       const tEntityId = (t as any).entity_id || t.entityId;
       const tSupplierId = (t as any).supplierId || t.supplierId;
       const tRelatedId = (t as any).related_id || t.relatedId;
@@ -292,7 +299,7 @@ const handleAddExcelRow = async () => {
     let allTxs = [...manualTxs, ...autoTxs];
     
     if (filterJobId !== 'all') {
-      allTxs = allTxs.filter(t => t.relatedId === filterJobId);
+      allTxs = allTxs.filter(t => String(t.relatedId) === String(filterJobId));
     }
     
     if (filterCurrency !== 'all') {
@@ -306,30 +313,6 @@ const handleAddExcelRow = async () => {
     return jobs.filter(j => j.supplierId === id).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   }, [jobs, id]);
 
-  const handleJobUpdate = (jobId: string, field: keyof Job, value: string | number) => {
-    setJobs(prev => {
-      const updated = prev.map(job => {
-        if (job.id === jobId) {
-          const newJob = { ...job, [field]: value };
-          if (field === 'rawMaterialPricePerTon' || field === 'rawMaterialWeight' || field === 'pettyCash') {
-            if (field === 'rawMaterialPricePerTon' || field === 'rawMaterialWeight') {
-              const p = newJob.rawMaterialPricePerTon || 0;
-              const w = newJob.rawMaterialWeight || 0;
-              newJob.rawMaterialCost = p * w;
-            }
-            newJob.totalPrice = (Number(newJob.rawMaterialCost) || 0) + (Number(newJob.pettyCash) || 0);
-          } else if (field === 'rawMaterialCost') {
-            newJob.totalPrice = (Number(newJob.rawMaterialCost) || 0) + (Number(newJob.pettyCash) || 0);
-          }
-          return newJob;
-        }
-        return job;
-      });
-      saveJobs(updated);
-      return updated;
-    });
-  };
-
   if (!supplier) {
     return (
       <div className="p-8 text-center">
@@ -339,7 +322,7 @@ const handleAddExcelRow = async () => {
     );
   }
 
-const handleAddRecord = async () => {
+  const handleAddRecord = async () => {
     const numericSupplierId = id ? parseInt(id, 10) : null;
 
     if (!numericSupplierId || isNaN(numericSupplierId)) {
@@ -352,17 +335,16 @@ const handleAddRecord = async () => {
       return;
     }
 
-    // 💡 التعديل الجوهري هنا: تحويل الـ Job ID لرقم صريح في حقل السندات لتفادي الـ 400
     const parsedRecordJobId = newRecordJobId && newRecordJobId !== 'none' ? parseInt(newRecordJobId, 10) : null;
     const numericRecordJobId = (parsedRecordJobId && !isNaN(parsedRecordJobId)) ? parsedRecordJobId : null;
 
     const newTxPayload = {
       entity_id: numericSupplierId,
-      related_id: numericRecordJobId, // 👈 بيبعت رقم أو null
+      related_id: numericRecordJobId, 
       type: 'outgoing', 
       amount: Number(newRecordAmount),
       currency: newRecordCurrency,
-      date: newRecordDate, // هو أصلاً مقصوص جاهز YYYY-MM-DD من الـ State
+      date: newRecordDate, 
       description: newRecordDesc || 'Payment Given',
       bl_number: '-',
       weight_in_tons: 0,
@@ -393,7 +375,7 @@ const handleAddRecord = async () => {
       setNewRecordDesc('');
       setNewRecordJobId('');
     } catch (error) {
-      console.error("Error saving record to PostgreSQL:", error);
+      console.error("Error saving record:", error);
       toast.error("Failed to save record to backend");
     }
   };
@@ -409,19 +391,13 @@ const handleAddRecord = async () => {
     printWindow.document.write(`
       <html>
         <head>
-          <title>Supplier Receipt - EasyFlow</title>
+          <title>Supplier Receipt</title>
           <style>
             body { font-family: sans-serif; padding: 40px; color: #333; }
-            .receipt { border: 1px solid #ddd; padding: 30px; max-width: 600px; margin: 0 auto; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
+            .receipt { border: 1px solid #ddd; padding: 30px; max-width: 600px; margin: 0 auto; border-radius: 8px; }
             .header { text-align: center; border-bottom: 2px solid #eee; padding-bottom: 15px; margin-bottom: 25px; }
-            .header h2 { margin: 0 0 5px 0; color: #1a1a1a; }
-            .header p { margin: 0; color: #666; }
-            .row { display: flex; justify-content: space-between; margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid #f5f5f5; }
-            .label { font-weight: bold; color: #555; }
-            .value { font-size: 1.05em; text-align: right; }
-            .total-row { display: flex; justify-content: space-between; margin-top: 20px; padding-top: 15px; border-top: 2px solid #333; }
-            .total-label { font-size: 1.2em; font-weight: bold; }
-            .total-val { font-size: 1.3em; font-weight: bold; color: #000; }
+            .row { display: flex; justify-content: space-between; margin-bottom: 12px; }
+            .total-row { display: flex; justify-content: space-between; margin-top: 20px; padding-top: 15px; border-top: 2px solid #333; font-weight: bold; }
           </style>
         </head>
         <body onload="window.print(); window.close();">
@@ -429,17 +405,16 @@ const handleAddRecord = async () => {
             <div class="header">
               <h2>Supplier Ledger</h2>
               <p>${supplier.name} | ${supplier.country}</p>
-              <p style="margin-top:5px;font-size:0.9em;">Date: ${formatDate(tx.date)}</p>
+              <p>Date: ${formatDate(tx.date)}</p>
             </div>
-            <div class="row"><span class="label">Job / Operation:</span> <span class="value">${jobName}</span></div>
-            <div class="row"><span class="label">Product / Desc:</span> <span class="value">${tx.description || '-'}</span></div>
-            <div class="row"><span class="label">Container / FCL:</span> <span class="value">${tx.blNumber || '-'}</span></div>
-            <div class="row"><span class="label">Weight (Tons):</span> <span class="value">${tx.weightInTons || '-'}</span></div>
-            <div class="row"><span class="label">Price per Ton:</span> <span class="value">${tx.pricePerTon || '-'}</span></div>
-            
+            <div class="row"><strong>Job / Operation:</strong> <span>${jobName}</span></div>
+            <div class="row"><strong>Product / Desc:</strong> <span>${tx.description || '-'}</span></div>
+            <div class="row"><strong>Container:</strong> <span>${tx.blNumber || '-'}</span></div>
+            <div class="row"><strong>Weight (Tons):</strong> <span>${tx.weightInTons || '-'}</span></div>
+            <div class="row"><strong>Price per Ton:</strong> <span>${tx.pricePerTon || '-'}</span></div>
             <div class="total-row">
-              <span class="total-label">${tx.type === 'outgoing' ? 'Payment Given' : 'Total Cost'}:</span> 
-              <span class="total-val">${tx.currency} ${tx.type === 'outgoing' ? payment : cost}</span>
+              <span>${tx.type === 'outgoing' ? 'Payment Given' : 'Total Cost'}:</span> 
+              <span>${tx.currency} ${tx.type === 'outgoing' ? payment : cost}</span>
             </div>
           </div>
         </body>
@@ -451,6 +426,7 @@ const handleAddRecord = async () => {
   const totalBalanceObj: Record<string, number> = {};
   const totalPaymentsObj: Record<string, number> = {};
   const totalCostObj: Record<string, number> = {};
+
   supplierTransactions.forEach(t => {
     const amt = t.type === 'outgoing' ? -t.amount : t.type === 'raw_material' ? (t.amount + (t.otherCost || 0)) : 0;
     totalBalanceObj[t.currency || 'USD'] = (totalBalanceObj[t.currency || 'USD'] || 0) + amt;
@@ -470,18 +446,15 @@ const handleAddRecord = async () => {
           </Button>
           <div>
             <h1 className="text-2xl font-bold tracking-tight">Supplier Ledger: {supplier.name}</h1>
-            <p className="text-muted-foreground flex items-center gap-2">
-              <span>Country: <strong>{supplier.country}</strong></span>
-            </p>
+            <p className="text-muted-foreground">Country: <strong>{supplier.country}</strong></p>
           </div>
         </div>
         <div className="flex items-center gap-2">
-          {/* تم إضافة زر سريع لفتح الـ Modal الخاص بالـ Add Record لسهولة إضافة سندات الدفع المباشرة */}
           <Button onClick={() => setIsAddRecordOpen(true)} className="bg-green-600 hover:bg-green-700 text-white gap-2">
             <Plus className="h-4 w-4" />
             Add Payment Record
           </Button>
-          <Button onClick={() => window.print()} variant="outline" className="shrink-0 gap-2">
+          <Button onClick={() => window.print()} variant="outline" className="gap-2">
             <Printer className="h-4 w-4" />
             Print Summary
           </Button>
@@ -491,8 +464,8 @@ const handleAddRecord = async () => {
       <div className="bg-card rounded-xl border shadow-sm flex flex-col mt-8">
         <div className="p-4 sm:p-6 border-b flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div>
-            <h2 className="text-xl font-bold font-heading">Excel-Style Ledger</h2>
-            <p className="text-sm text-muted-foreground mt-1">Add rows below. Changes automatically update the linked job's calculations.</p>
+            <h2 className="text-xl font-bold">Excel-Style Ledger</h2>
+            <p className="text-sm text-muted-foreground mt-1">Click cells directly to edit. Changes save instantly.</p>
           </div>
           <div className="flex items-center gap-2 flex-wrap w-full sm:w-auto">
             <Select value={filterJobId} onValueChange={setFilterJobId}>
@@ -502,7 +475,7 @@ const handleAddRecord = async () => {
               <SelectContent>
                 <SelectItem value="all">All Jobs</SelectItem>
                 {supplierJobs.map(j => (
-                  <SelectItem key={j.id} value={j.id}>{j.title}</SelectItem>
+                  <SelectItem key={j.id} value={String(j.id)}>{j.title}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -516,11 +489,10 @@ const handleAddRecord = async () => {
                 <SelectItem value="USD">USD</SelectItem>
                 <SelectItem value="EUR">EUR</SelectItem>
                 <SelectItem value="EGP">EGP</SelectItem>
-                <SelectItem value="GBP">GBP</SelectItem>
               </SelectContent>
             </Select>
 
-            <Button onClick={handleAddExcelRow} className="gap-2 shrink-0 h-9">
+            <Button onClick={handleAddExcelRow} className="gap-2 h-9">
               <Plus className="h-4 w-4" />
               Add Row
             </Button>
@@ -535,7 +507,7 @@ const handleAddRecord = async () => {
                 <th className="px-4 py-3 text-left font-medium text-muted-foreground w-48">Job Operation</th>
                 <th className="px-4 py-3 text-left font-medium text-muted-foreground w-40">Product / Desc</th>
                 <th className="px-4 py-3 text-left font-medium text-muted-foreground w-32">Container</th>
-                <th className="px-4 py-3 text-center font-medium text-muted-foreground w-24">Currency</th>
+                <th className="px-4 py-3 text-center font-medium text-muted-foreground w-16">Currency</th>
                 <th className="px-4 py-3 text-right font-medium text-muted-foreground w-24">Weight (Tons)</th>
                 <th className="px-4 py-3 text-right font-medium text-muted-foreground w-24">Price / Ton</th>
                 <th className="px-4 py-3 text-right font-medium text-muted-foreground w-28">Supplier Cost</th>
@@ -556,13 +528,13 @@ const handleAddRecord = async () => {
                     </td>
                     <td className="px-4 py-2">
                       {tx.isAuto ? (
-                        <span className="text-xs text-muted-foreground whitespace-nowrap overflow-hidden text-ellipsis block w-40">{jobs.find(j => j.id === tx.relatedId)?.title || 'Job'}</span>
+                        <span className="text-xs text-muted-foreground block w-40 overflow-hidden text-ellipsis whitespace-nowrap">{jobs.find(j => String(j.id) === String(tx.relatedId))?.title || 'Job'}</span>
                       ) : (
-                        <Select value={tx.relatedId || 'none'} onValueChange={(v) => handleTxUpdate(tx.id, 'relatedId', v === 'none' ? null : v)}>
+                        <Select value={tx.relatedId ? String(tx.relatedId) : 'none'} onValueChange={(v) => handleTxUpdate(tx.id, 'relatedId', v === 'none' ? null : v)}>
                           <SelectTrigger className="h-8 text-xs border-transparent hover:border-input bg-transparent"><SelectValue placeholder="Select Job" /></SelectTrigger>
                           <SelectContent>
                             <SelectItem value="none">General (No Job)</SelectItem>
-                            {jobs.filter(j => j.supplierId === id).map(j => <SelectItem key={j.id} value={j.id}>{formatDate(j.createdAt)} - {j.title}</SelectItem>)}
+                            {jobs.filter(j => j.supplierId === id).map(j => <SelectItem key={j.id} value={String(j.id)}>{formatDate(j.createdAt)} - {j.title}</SelectItem>)}
                           </SelectContent>
                         </Select>
                       )}
@@ -572,7 +544,7 @@ const handleAddRecord = async () => {
                     </td>
                     <td className="px-4 py-2">
                       {(() => {
-                        const linkedJob = jobs.find(j => j.id === tx.relatedId);
+                        const linkedJob = jobs.find(j => String(j.id) === String(tx.relatedId));
                         const qtyText = linkedJob?.numberOfContainers ? `(${linkedJob.numberOfContainers} FCL)` : '';
                         const blVal = tx.blNumber || linkedJob?.blNumber || '-';
                         if (tx.isAuto) {
@@ -674,23 +646,19 @@ const handleAddRecord = async () => {
         </div>
       </div>
 
-      {/* الـ Dialog (النافذة المنبثقة) الخاصة بإضافة السندات */}
+      {/* Dialog إضافة دفعة كاش (موجودة أسفل الكود) */}
       <Dialog open={isAddRecordOpen} onOpenChange={setIsAddRecordOpen}>
-        <DialogContent className="sm:max-w-[425px]">
-          <DialogHeader>
-            <DialogTitle>Add Payment Record</DialogTitle>
-          </DialogHeader>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Add Payment Record</DialogTitle></DialogHeader>
           <div className="grid gap-4 py-4">
-            <div className="grid grid-cols-4 items-center gap-4">
-              <Label htmlFor="amount" className="text-right">Amount</Label>
-              <Input id="amount" type="number" value={newRecordAmount} onChange={(e) => setNewRecordAmount(e.target.value)} className="col-span-3" placeholder="0.00" />
+            <div className="grid gap-2">
+              <Label>Amount</Label>
+              <Input type="number" value={newRecordAmount} onChange={(e) => setNewRecordAmount(e.target.value)} placeholder="0.00" />
             </div>
-            <div className="grid grid-cols-4 items-center gap-4">
-              <Label htmlFor="currency" className="text-right">Currency</Label>
+            <div className="grid gap-2">
+              <Label>Currency</Label>
               <Select value={newRecordCurrency} onValueChange={setNewRecordCurrency}>
-                <SelectTrigger className="col-span-3">
-                  <SelectValue />
-                </SelectTrigger>
+                <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="USD">USD</SelectItem>
                   <SelectItem value="EUR">EUR</SelectItem>
@@ -698,32 +666,24 @@ const handleAddRecord = async () => {
                 </SelectContent>
               </Select>
             </div>
-            <div className="grid grid-cols-4 items-center gap-4">
-              <Label htmlFor="job" className="text-right">Link to Job</Label>
-              <Select value={newRecordJobId || 'none'} onValueChange={setNewRecordJobId}>
-                <SelectTrigger className="col-span-3">
-                  <SelectValue placeholder="Select Job" />
-                </SelectTrigger>
+            <div className="grid gap-2">
+              <Label>Linked Job (Optional)</Label>
+              <Select value={newRecordJobId} onValueChange={setNewRecordJobId}>
+                <SelectTrigger><SelectValue placeholder="Select Job" /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="none">General (No Job)</SelectItem>
-                  {supplierJobs.map(j => <SelectItem key={j.id} value={j.id}>{j.title}</SelectItem>)}
+                  <SelectItem value="none">General Payment (No Job)</SelectItem>
+                  {supplierJobs.map(j => <SelectItem key={j.id} value={String(j.id)}>{j.title}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
-            <div className="grid grid-cols-4 items-center gap-4">
-              <Label htmlFor="date" className="text-right">Date</Label>
-              <div className="col-span-3">
-                <DatePicker value={newRecordDate} onChange={(v) => setNewRecordDate(v || '')} />
-              </div>
-            </div>
-            <div className="grid grid-cols-4 items-center gap-4">
-              <Label htmlFor="desc" className="text-right">Description</Label>
-              <Input id="desc" value={newRecordDesc} onChange={(e) => setNewRecordDesc(e.target.value)} className="col-span-3" placeholder="e.g. Cash payment, Bank transfer" />
+            <div className="grid gap-2">
+              <Label>Description</Label>
+              <Input value={newRecordDesc} onChange={(e) => setNewRecordDesc(e.target.value)} placeholder="e.g. Cash payment" />
             </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsAddRecordOpen(false)}>Cancel</Button>
-            <Button onClick={handleAddRecord} className="bg-green-600 hover:bg-green-700 text-white">Save Record</Button>
+            <Button onClick={handleAddRecord}>Save Record</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
