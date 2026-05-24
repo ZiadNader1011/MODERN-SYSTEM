@@ -14,7 +14,6 @@ import { FileViewer } from '@/components/FileViewer';
 import { Plus, Pencil, Trash2, FileText, Calendar, Camera, Briefcase, UserCircle, Calculator } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/utils/supabaseClient';
-import axios from 'axios';
 
 export default function Commissions() {
   const { t } = useTranslation();
@@ -28,21 +27,37 @@ export default function Commissions() {
   const [commissions, setCommissions] = useState<Commission[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const API_URL = import.meta.env.VITE_API_URL || 'https://modern-system-flame.vercel.app';
-
-  // جلب البيانات عبر الـ API لتوحيد مصدر البيانات ومنع الـ RLS Block
-const fetchCommissions = async () => {
+  // 1️⃣ جلب البيانات مباشرة من الـ Supabase لمنع الـ 404 والـ RLS Block
+  const fetchCommissions = async () => {
     try {
       setLoading(true);
       
-      // جلب البيانات باستخدام Axios من الرابط الصحيح
-      const response = await axios.get(`${API_URL}/api/commissions`);
-      
-      // في Axios، البيانات المستلمة تكون دائماً داخل response.data
-      setCommissions(response.data || []);
+      const { data, error } = await supabase
+        .from('commissions') // تأكد من مطابقة اسم الجدول في Supabase لديك
+        .select('*')
+        .order('date', { ascending: false });
+
+      if (error) throw error;
+
+      // تحويل وتنسيق الأعمدة لتطابق واجهة الـ TypeScript بالفرونت إند
+      const formattedData: Commission[] = (data || []).map((row: any) => ({
+        id: row.id,
+        date: row.date,
+        clientName: row.client_name,
+        trader: row.trader,
+        qualityRepresentative: row.quality_representative || '',
+        product: row.product,
+        numberOfContainers: row.number_of_containers,
+        totalQuantityTon: row.total_quantity_ton,
+        commissionPerTon: row.commission_per_ton,
+        currency: row.currency || 'USD',
+        attachments: row.attachments || []
+      }));
+
+      setCommissions(formattedData);
     } catch (error: any) {
       console.error('Error fetching commissions:', error);
-      toast.error('Failed to load commissions from server');
+      toast.error('Failed to load commissions from cloud storage');
     } finally {
       setLoading(false);
     }
@@ -180,81 +195,76 @@ const fetchCommissions = async () => {
     }
   };
 
-  // حفظ وتعديل البيانات عبر الـ API
+  // 2️⃣ الحفظ المباشر في Supabase مع تحويل أسماء الأعمدة بصيغة الـ Snake Case المعتمدة للـ Database
   const handleSave = async () => {
     if (!form.clientName || !form.date) {
       toast.error('Please fill in all required fields');
       return;
     }
 
-    const savingToast = toast.loading('Saving data...');
+    const savingToast = toast.loading('Saving data to Cloud...');
     const totalQty = Number(form.totalQuantityTon) || 0;
     const commPerTon = Number(form.commissionPerTon) || 0;
 
-    const cData: any = {
-      clientName: form.clientName,
+    // تجهيز كائن البيانات ليتوافق مع أسماء حقول الجداول في سوبابيز
+    const dbData: any = {
+      client_name: form.clientName,
       date: form.date,
       trader: form.trader,
-      qualityRepresentative: form.qualityRepresentative,
+      quality_representative: form.qualityRepresentative,
       product: form.product,
-      numberOfContainers: Number(form.numberOfContainers) || 0,
-      totalQuantityTon: totalQty,
-      commissionPerTon: commPerTon,
+      number_of_containers: Number(form.numberOfContainers) || 0,
+      total_quantity_ton: totalQty,
+      commission_per_ton: commPerTon,
       currency: form.currency,
-      attachments: form.attachments // إرسالها كمصفوفة طبيعية جاهزة للباك إند
+      attachments: form.attachments 
     };
     
     try {
-      let response;
-
       if (editing) {
-        response = await fetch(`${API_URL}/commissions/${editing.id}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(cData)
-        });
-      } else {
-        response = await fetch(`${API_URL}/commissions`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(cData)
-        });
-      }
+        // في حالة التعديل، نقوم بتحديث السجل بناءً على المعرف id الخاص به
+        const { error } = await supabase
+          .from('commissions')
+          .update(dbData)
+          .eq('id', editing.id);
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to save');
+        if (error) throw error;
+      } else {
+        // في حالة السجل الجديد، نقوم بعملية إدخال (Insert)
+        const { error } = await supabase
+          .from('commissions')
+          .insert([dbData]);
+
+        if (error) throw error;
       }
       
       toast.success(editing ? 'Commission updated successfully' : 'Commission created successfully', { id: savingToast });
       setEditOpen(false);
       fetchCommissions(); 
     } catch (error: any) {
-      console.error('Error saving:', error);
+      console.error('Error saving to Supabase:', error);
       toast.error(`Save failed: ${error.message}`, { id: savingToast });
     }
   };
 
-  // حذف السجل عبر الـ API
+  // 3️⃣ الحذف المباشر عبر تطبيق سوبابيز
   const handleDelete = async () => {
     if (!deleting) return;
-    const deletingToast = toast.loading('Removing record...');
+    const deletingToast = toast.loading('Removing record from cloud...');
     
     try {
-      const response = await fetch(`${API_URL}/commissions/${deleting.id}`, {
-        method: 'DELETE'
-      });
+      const { error } = await supabase
+        .from('commissions')
+        .delete()
+        .eq('id', deleting.id);
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Delete failed');
-      }
+      if (error) throw error;
 
-      toast.success('Commission removed', { id: deletingToast });
+      toast.success('Commission removed successfully', { id: deletingToast });
       setDeleting(null);
       fetchCommissions(); 
     } catch (error: any) {
-      console.error('Error deleting:', error);
+      console.error('Error deleting from Supabase:', error);
       toast.error(`Delete failed: ${error.message}`, { id: deletingToast });
     }
   };

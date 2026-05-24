@@ -211,56 +211,58 @@ export default function PackingLists() {
   };
 
  const handleSave = async () => {
-  const recordId = editing ? editing.id : generateId();
+    // 1️⃣ تحويل البيانات لتوافق أسماء أعمدة قاعدة البيانات (Snake Case)
+    const dbData: any = {
+      date: form.date,
+      bl_number: form.blNumber,
+      container_number: form.containerNumber,
+      client_name: form.clientName,
+      invoice_number: form.invoiceNumber,
+      custom_release: form.customRelease,
+      note: form.note,
+      dhl_number: form.dhlNumber,
+      product_name: form.productName,
+      variety: form.variety,
+      grade: form.grade,
+      caliber: form.caliber,
+      packages_qty_kind: form.packagesQtyKind,
+      number_of_packages: form.numberOfPackages,
+      net_weight: form.netWeight,
+      gross_weight: form.grossWeight,
+      shipping_agent: form.shippingAgent,
+      pol: form.pol,
+      pod: form.pod,
+      final_destination: form.finalDestination,
+      shipping_date: form.shippingDate,
+      number_of_containers: Number(form.numberOfContainers) || 0,
+      container_numbers: form.containerNumbers.slice(0, Number(form.numberOfContainers) || 0),
+      number_of_products: Number(form.numberOfProducts) || 0,
+      products: form.products.slice(0, Number(form.numberOfProducts) || 0),
+      attachments: form.attachments
+    };
 
-  // تحويل البيانات لتوافق أسماء أعمدة قاعدة البيانات (Snake Case)
-  const dbData = {
-    id: recordId,
-    date: form.date,
-    bl_number: form.blNumber,               // تعديل من blNumber إلى bl_number
-    container_number: form.containerNumber,   // تعديل لتوافق الجدول
-    client_name: form.clientName,            // تعديل لتوافق الجدول
-    invoice_number: form.invoiceNumber,      // تعديل لتوافق الجدول
-    custom_release: form.customRelease,      // تعديل لتوافق الجدول
-    note: form.note,
-    dhl_number: form.dhlNumber,
-    product_name: form.productName,
-    variety: form.variety,
-    grade: form.grade,
-    caliber: form.caliber,
-    packages_qty_kind: form.packagesQtyKind,
-    number_of_packages: form.numberOfPackages,
-    net_weight: form.netWeight,
-    gross_weight: form.grossWeight,
-    shipping_agent: form.shippingAgent,
-    pol: form.pol,
-    pod: form.pod,
-    final_destination: form.finalDestination,
-    shipping_date: form.shippingDate,
-    number_of_containers: Number(form.numberOfContainers) || 0,
-    container_numbers: form.containerNumbers.slice(0, Number(form.numberOfContainers) || 0),
-    number_of_products: Number(form.numberOfProducts) || 0,
-    products: form.products.slice(0, Number(form.numberOfProducts) || 0),
-    attachments: form.attachments
+    // 2️⃣ إدارة الـ id: إذا كنا نعدل نرسل الرقم، وإذا كنا ننشئ نترك الحقل تماماً لتولده قاعدة البيانات تلقائياً
+    if (editing) {
+      dbData.id = Number(editing.id);
+    }
+
+    const savingToast = toast.loading('Saving changes to Supabase Cloud...');
+
+    try {
+      const { error } = await supabase
+        .from('packing_lists')
+        .upsert(dbData, { onConflict: 'id' });
+
+      if (error) throw error;
+
+      toast.success(editing ? 'Packing List updated successfully' : 'Packing List created successfully', { id: savingToast });
+      setEditOpen(false);
+      fetchPackingLists(); 
+    } catch (error: any) {
+      console.error('Database Save Error:', error);
+      toast.error(`Save failed: ${error.message}`, { id: savingToast });
+    }
   };
-
-  const savingToast = toast.loading('Saving changes to Supabase Cloud...');
-
-  try {
-    const { error } = await supabase
-      .from('packing_lists')
-      .upsert(dbData, { onConflict: 'id' });
-
-    if (error) throw error;
-
-    toast.success(editing ? 'Packing List updated successfully' : 'Packing List created successfully', { id: savingToast });
-    setEditOpen(false);
-    fetchPackingLists(); 
-  } catch (error: any) {
-    console.error('Database Save Error:', error);
-    toast.error(`Save failed: ${error.message}`, { id: savingToast });
-  }
-};
 
   // 3️⃣ دالة الحذف المعدلة لمسح السجل من قاعدة البيانات السحابية
   const handleDelete = async () => {
