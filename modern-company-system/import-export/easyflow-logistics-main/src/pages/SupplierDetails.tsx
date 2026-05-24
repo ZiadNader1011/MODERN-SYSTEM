@@ -96,7 +96,7 @@ export default function SupplierDetails() {
   const [newRecordCurrency, setNewRecordCurrency] = useState('USD');
   const [newRecordDate, setNewRecordDate] = useState(new Date().toISOString().split('T')[0]);
 
-  const handleAddExcelRow = async () => {
+const handleAddExcelRow = async () => {
     const numericSupplierId = id ? parseInt(id, 10) : null;
 
     if (!numericSupplierId || isNaN(numericSupplierId)) {
@@ -107,31 +107,45 @@ export default function SupplierDetails() {
     const parsedJobId = filterJobId !== 'all' ? parseInt(filterJobId, 10) : null;
     const numericJobId = (parsedJobId && !isNaN(parsedJobId)) ? parsedJobId : null;
 
- const newTxPayload = {
-  supplierId: numericSupplierId, // بدلاً من entity_id
-  jobId: numericJobId,           // بدلاً من related_id
-  type: 'raw_material', 
-  amount: 1, 
-  currency: filterCurrency !== 'all' ? filterCurrency : 'USD', 
-  date: new Date().toISOString().split('T')[0], 
-  description: 'New Raw Material Entry', 
-  blNumber: '-', // تأكد إذا كان السيرفر يتوقعها camelCase أو snake_case
-  weightInTons: 0, 
-  pricePerTon: 0,  
-  otherCost: 0
-};
+    // 1. تجهيز الـ Payload بالـ camelCase المظبوط تماماً والآمن للـ Filter
+    const newTxPayload = {
+      supplierId: numericSupplierId, 
+      jobId: numericJobId,           
+      relatedId: numericJobId ? String(numericJobId) : 'none', // ✅ إضافة هامة جداً عشان الفلتر يقرأ السطر فوراً
+      type: 'raw_material', 
+      amount: 1, 
+      currency: filterCurrency !== 'all' ? filterCurrency : 'USD', 
+      date: new Date().toISOString().split('T')[0], 
+      description: 'New Raw Material Entry', 
+      blNumber: '-', 
+      weightInTons: 0, 
+      pricePerTon: 0,  
+      otherCost: 0
+    };
 
     try {
       const response = await axios.post('/api/transactions', newTxPayload);
+      
       if (response.status === 201 || response.status === 200) {
         toast.success("Row added successfully");
+        
+        // 2. تحديث الـ State في الـ Frontend فوراً بالكائن الجديد القادم من السيرفر
+        if (response.data) {
+          // دمج الـ relatedId الافتراضي مع بيانات السيرفر لضمان تخطي الفلترة في نفس اللحظة
+          const addedTx = {
+            ...response.data,
+            relatedId: response.data.relatedId || response.data.jobId || 'none'
+          };
+          setTransactions(prev => [...prev, addedTx]);
+        }
+        
+        // 3. إعادة جلب البيانات للتأكيد الكامل وتطابق البيانات مع الـ Database
         await fetchTxs();
       }
     } catch (error) {
       toast.error("Failed to save to backend");
     }
   };
-
   const handleTxUpdate = async (txId: string | number, field: string, value: any) => {
     let previousTransactions: Transaction[] = [];
     let payloadToSend: any = null;
