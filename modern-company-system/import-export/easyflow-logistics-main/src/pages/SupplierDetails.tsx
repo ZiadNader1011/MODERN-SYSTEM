@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useParams as useRouterParams, useNavigate as useRouterNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
@@ -18,41 +18,20 @@ import { DatePicker } from '@/components/DatePicker';
 import axios from '@/api/axios';
 
 function EditableCell({ value, type = 'text', onSave, className = '', placeholder = '' }: { value: string | number | undefined, type?: string, onSave: (val: string | number) => void, className?: string, placeholder?: string }) {
-  const [val, setVal] = useState(value !== undefined && value !== null ? value : '');
-
-  const valRef = useRef(val);
-  const onSaveRef = useRef(onSave);
-  const propValRef = useRef(value);
-
-  useEffect(() => { valRef.current = val; }, [val]);
-  useEffect(() => { onSaveRef.current = onSave; }, [onSave]);
-  useEffect(() => { propValRef.current = value; }, [value]);
+  const [val, setVal] = useState(value !== undefined && value !== null ? String(value) : '');
 
   useEffect(() => {
-    if (String(value) !== String(valRef.current)) {
-      setVal(value !== undefined && value !== null ? value : '');
+    if (value !== undefined && value !== null && String(value) !== val) {
+      setVal(String(value));
     }
   }, [value]);
 
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      let finalVal = val;
-      if (type === 'number') {
-        finalVal = finalVal === '' ? 0 : Number(finalVal);
-      }
-      if (finalVal !== value && val !== '') {
-        onSave(finalVal);
-      }
-    }, 600);
-    return () => clearTimeout(timer);
-  }, [val, type, value, onSave]);
-
   const handleBlur = () => {
-    let finalVal = val;
+    let finalVal: string | number = val;
     if (type === 'number') {
-      finalVal = finalVal === '' ? 0 : Number(finalVal);
+      finalVal = val === '' ? 0 : Number(val);
     }
-    if (finalVal !== value) {
+    if (String(finalVal) !== String(value)) {
       onSave(finalVal);
     }
   };
@@ -86,7 +65,6 @@ export default function SupplierDetails() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
 
-  // دالة موحدة لجلب البيانات من السيرفر
   const fetchTxs = async () => {
     try {
       const res = await axios.get('/api/transactions');
@@ -104,13 +82,13 @@ export default function SupplierDetails() {
   const [isAddRecordOpen, setIsAddRecordOpen] = useState(false);
   const [filterJobId, setFilterJobId] = useState<string>('all');
   const [filterCurrency, setFilterCurrency] = useState<string>('all');
-  const [newRecordJobId, setNewRecordJobId] = useState('');
   const [newRecordAmount, setNewRecordAmount] = useState('');
   const [newRecordDesc, setNewRecordDesc] = useState('');
+  const [newRecordJobId, setNewRecordJobId] = useState('');
   const [newRecordCurrency, setNewRecordCurrency] = useState('USD');
   const [newRecordDate, setNewRecordDate] = useState(new Date().toISOString().split('T')[0]);
 
-const handleAddExcelRow = async () => {
+  const handleAddExcelRow = async () => {
     const numericSupplierId = id ? parseInt(id, 10) : null;
 
     if (!numericSupplierId || isNaN(numericSupplierId)) {
@@ -124,7 +102,8 @@ const handleAddExcelRow = async () => {
     const newTxPayload = {
       entity_id: numericSupplierId,
       type: 'raw_material', 
-      amount: 1, // الحد الأدنى المقبول بالسيرفر لتجنب خطأ الـ positive number
+      amount: 1, 
+      // جعل السطر الجديد يأخذ العملة المفلترة حالياً بدلاً من فرض USD دائماً
       currency: filterCurrency !== 'all' ? filterCurrency : 'USD', 
       date: new Date().toISOString().split('T')[0], 
       description: 'New Raw Material Entry', 
@@ -139,7 +118,7 @@ const handleAddExcelRow = async () => {
       const response = await axios.post('/api/transactions', newTxPayload);
       if (response.status === 201 || response.status === 200) {
         toast.success("Row added successfully");
-        // جلب البيانات من جديد لضمان نزول السطر الجديد في الجدول بالمعرف الصحيح
+        // لم نعد بحاجة لإعادة تعيين الفلاتر إلى 'all' لأن السطر الجديد يرث الفلتر الحالي وسيظهر فوراً
         await fetchTxs();
       }
     } catch (error) {
@@ -148,25 +127,8 @@ const handleAddExcelRow = async () => {
   };
 
   const handleTxUpdate = async (txId: string | number, field: keyof Transaction, value: any) => {
-    const previousTransactions = [...transactions];
-
-    let targetTx: any = null;
-    const updated = transactions.map(t => {
-      if (String(t.id) === String(txId)) {
-        const newT = { ...t, [field]: value };
-
-        // حساب الـ amount تلقائياً بناءً على المدخلات
-        if (field === 'weightInTons' || field === 'pricePerTon') {
-          const calculated = (Number(newT.weightInTons) || 0) * (Number(newT.pricePerTon) || 0);
-          // 💡 إذا كانت النتيجة صفر، نجعلها 1 كحد أدنى لتفادي رفض السيرفر لها
-          newT.amount = calculated > 0 ? calculated : 1;
-        }
-        targetTx = newT;
-        return newT;
-      }
-      return t;
-    });
-    setTransactions(updated);
+    let previousTransactions: Transaction[] = [];
+    let payloadToSend: any = null;
 
     const dbFieldsMap: Record<string, string> = {
       date: 'date',
@@ -181,40 +143,81 @@ const handleAddExcelRow = async () => {
       otherCost: 'other_cost'
     };
 
-    const dbField = dbFieldsMap[field as string] || (field as string);
+    setTransactions(prev => {
+      previousTransactions = [...prev];
+      return prev.map(t => {
+        if (String(t.id) === String(txId)) {
+          // 1. تحديث الكائن بتبديل الحقل المعدل
+          const updatedTx = { ...t, [field]: value };
 
-    // تأمين الـ amount المراد إرساله للسيرفر
-    const finalAmount = targetTx && targetTx.amount > 0 ? targetTx.amount : 1;
+          // 2. حل مشكلة الـ undefined: نقرأ القيمة من الـ camelCase أو الـ snake_case لضمان عدم تصفيرها
+          const getVal = (camel: string, snake: string) => {
+            if (field === camel) return value;
+            return (updatedTx as any)[camel] !== undefined ? (updatedTx as any)[camel] : (updatedTx as any)[snake];
+          };
 
-    try {
-      await axios.put(`/api/transactions/${txId}`, {
-        [dbField]: value,
-        amount: finalAmount,
-        type: targetTx?.type || 'raw_material',
-        related_id: targetTx?.relatedId ? parseInt(targetTx.relatedId, 10) : null,
-        bl_number: targetTx?.blNumber || '-',
-        weight_in_tons: Number(targetTx?.weightInTons) || 0,
-        price_per_ton: Number(targetTx?.pricePerTon) || 0,
-        other_cost: Number(targetTx?.otherCost) || 0
+          const currentWeight = Number(getVal('weightInTons', 'weight_in_tons')) || 0;
+          const currentPrice = Number(getVal('pricePerTon', 'price_per_ton')) || 0;
+          const currentOtherCost = Number(getVal('otherCost', 'other_cost')) || 0;
+
+          // حساب الإجمالي تلقائياً إذا كان نوع المعاملة خامات
+          if (updatedTx.type === 'raw_material') {
+            const calculated = currentWeight * currentPrice;
+            updatedTx.amount = calculated > 0 ? calculated : (field === 'amount' ? Number(value) : updatedTx.amount || 1);
+          } else {
+            if (field === 'amount') updatedTx.amount = Number(value);
+          }
+
+          // 3. بناء الـ Payload النهائي الموجه للـ API بكافة الحقول المتوفرة لمنع التصفير
+          payloadToSend = {
+            date: getVal('date', 'date'),
+            description: getVal('description', 'description'),
+            currency: getVal('currency', 'currency'),
+            amount: updatedTx.amount,
+            type: updatedTx.type || 'raw_material',
+            related_id: field === 'relatedId' 
+              ? (value && value !== 'none' ? parseInt(value, 10) : null)
+              : (updatedTx.relatedId && updatedTx.relatedId !== 'none' ? parseInt(updatedTx.relatedId, 10) : (updatedTx as any).related_id || null),
+            bl_number: getVal('blNumber', 'bl_number') || '-',
+            weight_in_tons: currentWeight,
+            price_per_ton: currentPrice,
+            other_cost: currentOtherCost
+          };
+
+          return updatedTx;
+        }
+        return t;
       });
+    });
+
+    if (!payloadToSend) return;
+    try {
+      // إرسال الـ Payload الكامل الذي يحافظ على القيم القديمة والجديدة معاً
+      await axios.put(`/api/transactions/${txId}`, payloadToSend);
     } catch (error) {
       toast.error("Failed to update on server. Reverting...");
-      // في حال فشل السيرفر، يتم استرجاع الحالة السابقة فوراً لتجنب تعليق الواجهة
-      setTransactions(previousTransactions);
+      if (previousTransactions.length > 0) {
+        setTransactions(previousTransactions);
+      }
     }
   };
 
   const handleDeleteTx = async (txId: string | number) => {
-    const previousTransactions = [...transactions];
-    const updated = transactions.filter(t => String(t.id) !== String(txId));
-    setTransactions(updated);
+    let previousTransactions: Transaction[] = [];
+    
+    setTransactions(prev => {
+      previousTransactions = [...prev];
+      return prev.filter(t => String(t.id) !== String(txId));
+    });
 
     try {
       await axios.delete(`/api/transactions/${txId}`);
       toast.success("Row deleted successfully");
     } catch (error) {
       toast.error("Failed to delete from server");
-      setTransactions(previousTransactions);
+      if (previousTransactions.length > 0) {
+        setTransactions(previousTransactions);
+      }
     }
   };
 
@@ -226,7 +229,6 @@ const handleAddExcelRow = async () => {
     const manualTxs = transactions.filter(t => {
       if (t.type === 'discount') return false;
       
-      // تحويل إجباري لكافة المعرفات إلى نصوص لمطابقتها مع الـ URL الـ String بشكل سليم
       const tEntityId = String((t as any).entity_id || t.entityId || '');
       const tSupplierId = String((t as any).supplierId || t.supplierId || '');
       const tRelatedId = String((t as any).related_id || t.relatedId || '');
