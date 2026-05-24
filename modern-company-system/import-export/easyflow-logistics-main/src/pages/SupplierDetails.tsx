@@ -6,10 +6,8 @@ import {
   getSuppliers, getJobs, getTransactions, getContainers, getProducts,
   formatDate, formatCurrency, formatBalanceObj, Job, saveJobs, generateId, saveTransactions, Transaction
 } from '@/data/store';
-import { PageHeader } from '@/components/PageHeader';
 import { Button } from '@/components/ui/button';
-import { ArrowLeft, Plus, Printer, Trash2, Phone, Mail, MapPin, Download, FileText, Search } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
+import { ArrowLeft, Plus, Printer, Trash2 } from 'lucide-react';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter
 } from '@/components/ui/dialog';
@@ -92,23 +90,26 @@ function EditableCell({ value, type = 'text', onSave, className = '', placeholde
 }
 
 export default function SupplierDetails() {
-  const { id } = useRouterParams();
+  const { id } = useRouterParams(); // هذا دائماً عبارة عن String (مثلاً "3")
   const navigate = useRouterNavigate();
   const { t } = useTranslation();
-  const [editOpen, setEditOpen] = useState(false);
-  const [deleteOpen, setDeleteOpen] = useState(false);
-  const [editing, setEditing] = useState<Transaction | null>(null);
-  const [deleting, setDeleting] = useState<Transaction | null>(null);
 
   const suppliers = useMemo(() => getSuppliers(), []);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
-  const containers = useMemo(() => getContainers(), []);
-  const allProducts = useMemo(() => getProducts(), []);
 
   useEffect(() => {
     setJobs(getJobs());
-    setTransactions(getTransactions());
+    // جلب المعاملات من السيرفر عند تحميل الصفحة لضمان المزامنة
+    const fetchTxs = async () => {
+      try {
+        const res = await axios.get('/api/transactions');
+        setTransactions(res.data);
+      } catch (err) {
+        setTransactions(getTransactions());
+      }
+    };
+    fetchTxs();
   }, []);
 
   const [isAddRecordOpen, setIsAddRecordOpen] = useState(false);
@@ -149,11 +150,13 @@ export default function SupplierDetails() {
       const response = await axios.post('/api/transactions', newTxPayload);
       const savedTxFromBackend = response.data; 
 
+      // 💡 الحل هنا: تحويل كافة المعرفات إلى نصوص أو أرقام موحدة تماثل الـ URL المتوقع
       const normalizedTx = {
         ...savedTxFromBackend,
-        id: savedTxFromBackend.id,
-        supplierId: savedTxFromBackend.entity_id,
-        relatedId: savedTxFromBackend.related_id,
+        id: String(savedTxFromBackend.id),
+        supplierId: String(savedTxFromBackend.entity_id),
+        entityId: String(savedTxFromBackend.entity_id),
+        relatedId: savedTxFromBackend.related_id ? String(savedTxFromBackend.related_id) : null,
         blNumber: savedTxFromBackend.bl_number,
         weightInTons: savedTxFromBackend.weight_in_tons,
         pricePerTon: savedTxFromBackend.price_per_ton,
@@ -168,7 +171,6 @@ export default function SupplierDetails() {
   };
 
   const handleTxUpdate = async (txId: string | number, field: keyof Transaction, value: any) => {
-    const numericSupplierId = id ? parseInt(id, 10) : null;
     const previousTransactions = [...transactions];
 
     let targetTx: any = null;
@@ -176,12 +178,9 @@ export default function SupplierDetails() {
       if (String(t.id) === String(txId)) {
         const newT = { 
           ...t, 
-          [field]: value,
-          supplierId: (t as any).supplierId || numericSupplierId,
-          jobId: (t as any).jobId || (t.relatedId && t.relatedId !== id ? parseInt(t.relatedId, 10) : null)
+          [field]: value
         };
 
-        // تحديث الحسابات التلقائية بناءً على الوزن والسعر
         if (field === 'weightInTons' || field === 'pricePerTon') {
           newT.amount = (Number(newT.weightInTons) || 0) * (Number(newT.pricePerTon) || 0);
         }
@@ -208,18 +207,16 @@ export default function SupplierDetails() {
     const dbField = dbFieldsMap[field as string] || (field as string);
 
     try {
-      // 💡 تم تعديل الـ payload ليرسل البيانات متوافقة بالكامل مع الـ Backend
       await axios.put(`/api/transactions/${txId}`, {
         [dbField]: value,
         amount: targetTx.amount,
-        type: targetTx.type, // يضمن إرسال النوع المحدث في حال تم تغييره من الأزرار
+        type: targetTx.type,
         related_id: targetTx.relatedId ? parseInt(targetTx.relatedId, 10) : null,
         bl_number: targetTx.blNumber || '-',
         weight_in_tons: Number(targetTx.weightInTons) || 0,
         price_per_ton: Number(targetTx.pricePerTon) || 0,
         other_cost: Number(targetTx.otherCost) || 0
       });
-      toast.success("Updated successfully");
     } catch (error) {
       toast.error("Failed to update on server");
       setTransactions(previousTransactions);
@@ -240,23 +237,23 @@ export default function SupplierDetails() {
     }
   };
 
-  const supplier = suppliers.find(s => s.id === id);
+  const supplier = suppliers.find(s => String(s.id) === String(id));
 
   const supplierTransactions = useMemo(() => {
-    const numericSupplierId = id ? parseInt(id, 10) : null;
-    const supplierJobIds = jobs.filter(j => j.supplierId === id).map(j => j.id);
+    const supplierJobIds = jobs.filter(j => String(j.supplierId) === String(id)).map(j => String(j.id));
     
     const manualTxs = transactions.filter(t => {
       if (t.type === 'discount') return false;
       
-      const tEntityId = (t as any).entity_id || t.entityId;
-      const tSupplierId = (t as any).supplierId || t.supplierId;
-      const tRelatedId = (t as any).related_id || t.relatedId;
+      // توحيد مقارنة الحقول كمقارنة نصوص String تفادياً لاختلاف السيرفر والفرونت
+      const tEntityId = String((t as any).entity_id || t.entityId || '');
+      const tSupplierId = String((t as any).supplierId || t.supplierId || '');
+      const tRelatedId = String((t as any).related_id || t.relatedId || '');
 
       const isBelongsToSupplier = 
-        tSupplierId === numericSupplierId || 
-        tEntityId === id || 
-        tRelatedId === id;
+        tSupplierId === String(id) || 
+        tEntityId === String(id) || 
+        tRelatedId === String(id);
 
       if (isBelongsToSupplier) return true;
 
@@ -266,7 +263,7 @@ export default function SupplierDetails() {
       return false;
     }).map(t => ({
       ...t,
-      relatedId: (t as any).related_id || t.relatedId,
+      relatedId: (t as any).related_id ? String((t as any).related_id) : t.relatedId,
       blNumber: (t as any).bl_number || t.blNumber,
       weightInTons: (t as any).weight_in_tons !== undefined ? (t as any).weight_in_tons : t.weightInTons,
       pricePerTon: (t as any).price_per_ton !== undefined ? (t as any).price_per_ton : t.pricePerTon,
@@ -274,7 +271,7 @@ export default function SupplierDetails() {
     }));
 
     const autoTxs: any[] = [];
-    const supplierJobsList = jobs.filter(j => j.supplierId === id);
+    const supplierJobsList = jobs.filter(j => String(j.supplierId) === String(id));
     
     supplierJobsList.forEach(job => {
       const grossCost = job.rawMaterialCost || ((Number(job.rawMaterialWeight) || 0) * (Number(job.rawMaterialPricePerTon) || 0));
@@ -282,7 +279,7 @@ export default function SupplierDetails() {
       const cost = grossCost - (grossCost * (suppDisc / 100));
       autoTxs.push({
         id: `auto-job-${job.id}`,
-        relatedId: job.id,
+        relatedId: String(job.id),
         type: 'raw_material',
         amount: cost,
         otherCost: Number(job.pettyCash) || 0,
@@ -310,7 +307,7 @@ export default function SupplierDetails() {
   }, [transactions, jobs, id, filterJobId, filterCurrency]);
 
   const supplierJobs = useMemo(() => {
-    return jobs.filter(j => j.supplierId === id).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    return jobs.filter(j => String(j.supplierId) === String(id)).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   }, [jobs, id]);
 
   if (!supplier) {
@@ -324,7 +321,6 @@ export default function SupplierDetails() {
 
   const handleAddRecord = async () => {
     const numericSupplierId = id ? parseInt(id, 10) : null;
-
     if (!numericSupplierId || isNaN(numericSupplierId)) {
       toast.error("Invalid Supplier ID");
       return;
@@ -358,9 +354,10 @@ export default function SupplierDetails() {
 
       const normalizedTx = {
         ...savedTxFromBackend,
-        id: savedTxFromBackend.id,
-        supplierId: savedTxFromBackend.entity_id,
-        relatedId: savedTxFromBackend.related_id,
+        id: String(savedTxFromBackend.id),
+        supplierId: String(savedTxFromBackend.entity_id),
+        entityId: String(savedTxFromBackend.entity_id),
+        relatedId: savedTxFromBackend.related_id ? String(savedTxFromBackend.related_id) : null,
         blNumber: savedTxFromBackend.bl_number,
         weightInTons: savedTxFromBackend.weight_in_tons,
         pricePerTon: savedTxFromBackend.price_per_ton,
@@ -375,13 +372,12 @@ export default function SupplierDetails() {
       setNewRecordDesc('');
       setNewRecordJobId('');
     } catch (error) {
-      console.error("Error saving record:", error);
       toast.error("Failed to save record to backend");
     }
   };
 
   const printRow = (tx: Transaction) => {
-    const jobName = tx.relatedId && tx.relatedId !== 'none' && tx.relatedId !== id ? jobs.find(j => j.id === tx.relatedId)?.title || 'General' : 'General';
+    const jobName = tx.relatedId && tx.relatedId !== 'none' ? jobs.find(j => String(j.id) === String(tx.relatedId))?.title || 'General' : 'General';
     const cost = tx.type === 'raw_material' ? (tx.amount + (tx.otherCost || 0)) : 0;
     const payment = tx.type === 'outgoing' ? tx.amount : 0;
     
@@ -534,7 +530,7 @@ export default function SupplierDetails() {
                           <SelectTrigger className="h-8 text-xs border-transparent hover:border-input bg-transparent"><SelectValue placeholder="Select Job" /></SelectTrigger>
                           <SelectContent>
                             <SelectItem value="none">General (No Job)</SelectItem>
-                            {jobs.filter(j => j.supplierId === id).map(j => <SelectItem key={j.id} value={String(j.id)}>{formatDate(j.createdAt)} - {j.title}</SelectItem>)}
+                            {jobs.filter(j => String(j.supplierId) === String(id)).map(j => <SelectItem key={j.id} value={String(j.id)}>{formatDate(j.createdAt)} - {j.title}</SelectItem>)}
                           </SelectContent>
                         </Select>
                       )}
@@ -646,7 +642,6 @@ export default function SupplierDetails() {
         </div>
       </div>
 
-      {/* Dialog إضافة دفعة كاش (موجودة أسفل الكود) */}
       <Dialog open={isAddRecordOpen} onOpenChange={setIsAddRecordOpen}>
         <DialogContent>
           <DialogHeader><DialogTitle>Add Payment Record</DialogTitle></DialogHeader>
