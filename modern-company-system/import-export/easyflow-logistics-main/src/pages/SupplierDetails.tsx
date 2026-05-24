@@ -121,53 +121,59 @@ export default function SupplierDetails() {
   const [newRecordDate, setNewRecordDate] = useState(new Date().toISOString().split('T')[0]);
 
 const handleAddExcelRow = async () => {
-    const numericSupplierId = id ? parseInt(id, 10) : null;
+  const numericSupplierId = id ? parseInt(id, 10) : null;
 
-    if (!numericSupplierId || isNaN(numericSupplierId)) {
-      toast.error("Invalid Supplier ID");
-      return;
-    }
+  if (!numericSupplierId || isNaN(numericSupplierId)) {
+    toast.error("Invalid Supplier ID");
+    return;
+  }
 
-    // 💡 التعديل هنا: بنضمن إن التحويل لرقم نجح ومطلعش NaN
-    const parsedJobId = filterJobId !== 'all' ? parseInt(filterJobId, 10) : null;
-    const numericJobId = (parsedJobId && !isNaN(parsedJobId)) ? parsedJobId : null;
+  const parsedJobId = filterJobId !== 'all' ? parseInt(filterJobId, 10) : null;
+  const numericJobId = (parsedJobId && !isNaN(parsedJobId)) ? parsedJobId : null;
 
-    const newTxPayload = {
-      entity_id: numericSupplierId,
-      type: 'raw_material', 
-      amount: 0,
-      currency: filterCurrency !== 'all' ? filterCurrency : 'USD', 
-      // 💡 تظبيط التاريخ عشان لو الباك-إند مستني تاريخ سادة YYYY-MM-DD
-      date: new Date().toISOString().split('T')[0], 
-      description: 'New Raw Material Entry', 
-      bl_number: '-', 
-      weight_in_tons: 0,
-      price_per_ton: 0,
-      other_cost: 0,
-      related_id: numericJobId // 👈 بيبعت رقم أو null صريح
+  // بناء الـ Payload مع التحقق من الحقول الرقمية وعدم إرسال قيم null إذا كان الباك إند يتحسس منها
+  const newTxPayload: Record<string, any> = {
+    entity_id: numericSupplierId,
+    type: 'raw_material', 
+    amount: 0,
+    currency: filterCurrency !== 'all' ? filterCurrency : 'USD', 
+    date: new Date().toISOString().split('T')[0], 
+    description: 'New Raw Material Entry', 
+    bl_number: '-', 
+    weight_in_tons: 0,
+    price_per_ton: 0,
+    other_cost: 0
+  };
+
+  // إرسال الحقل فقط إذا كان هناك Job محدد بالفعل، وإلا نتركه تماماً أو نرسل الحقل المتوقع من الباك إند
+  if (numericJobId) {
+    newTxPayload.related_id = numericJobId;
+    // ملحوظة: لو الباك إند في قاعدة البيانات مسمي الحقل job_id وليس related_id، قم بتفعيل السطر التالي:
+    // newTxPayload.job_id = numericJobId; 
+  }
+
+  try {
+    const response = await axios.post('/api/transactions', newTxPayload);
+    const savedTxFromBackend = response.data; 
+
+    const normalizedTx = {
+      ...savedTxFromBackend,
+      id: savedTxFromBackend.id,
+      supplierId: savedTxFromBackend.entity_id,
+      relatedId: savedTxFromBackend.related_id || savedTxFromBackend.job_id,
+      blNumber: savedTxFromBackend.bl_number,
+      weightInTons: savedTxFromBackend.weight_in_tons,
+      pricePerTon: savedTxFromBackend.price_per_ton,
+      otherCost: savedTxFromBackend.other_cost
     };
 
-    try {
-      const response = await axios.post('/api/transactions', newTxPayload);
-      const savedTxFromBackend = response.data; 
-
-      const normalizedTx = {
-        ...savedTxFromBackend,
-        id: savedTxFromBackend.id,
-        supplierId: savedTxFromBackend.entity_id,
-        relatedId: savedTxFromBackend.related_id,
-        blNumber: savedTxFromBackend.bl_number,
-        weightInTons: savedTxFromBackend.weight_in_tons,
-        pricePerTon: savedTxFromBackend.price_per_ton,
-        otherCost: savedTxFromBackend.other_cost
-      };
-
-      setTransactions(prev => [...prev, normalizedTx]);
-      toast.success("Row added successfully");
-    } catch (error) {
-      toast.error("Failed to save to backend");
-    }
-  };
+    setTransactions(prev => [...prev, normalizedTx]);
+    toast.success("Row added successfully");
+  } catch (error) {
+    console.error("Backend error details:", error); // لمشاهدة تفاصيل الخطأ القادم من السيرفر في الـ Console
+    toast.error("Failed to save to backend");
+  }
+};
 
   const handleTxUpdate = async (txId: string | number, field: keyof Transaction, value: any) => {
     const numericSupplierId = id ? parseInt(id, 10) : null;
