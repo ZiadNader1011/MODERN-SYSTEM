@@ -17,7 +17,15 @@ import { Input } from '@/components/ui/input';
 import { DatePicker } from '@/components/DatePicker';
 import axios from '@/api/axios';
 
-function EditableCell({ value, type = 'text', onSave, className = '', placeholder = '' }: { value: string | number | undefined, type?: string, onSave: (val: string | number) => void, className?: string, placeholder?: string }) {
+interface EditableCellProps {
+  value: string | number | undefined;
+  type?: string;
+  onSave: (val: string | number) => void;
+  className?: string;
+  placeholder?: string;
+}
+
+function EditableCell({ value, type = 'text', onSave, className = '', placeholder = '' }: EditableCellProps) {
   const [val, setVal] = useState(value !== undefined && value !== null ? String(value) : '');
 
   useEffect(() => {
@@ -84,7 +92,7 @@ export default function SupplierDetails() {
   const [filterCurrency, setFilterCurrency] = useState<string>('all');
   const [newRecordAmount, setNewRecordAmount] = useState('');
   const [newRecordDesc, setNewRecordDesc] = useState('');
-  const [newRecordJobId, setNewRecordJobId] = useState('');
+  const [newRecordJobId, setNewRecordJobId] = useState('none'); // تم التعديل لتبدأ بـ none بدلاً من نص فارغ
   const [newRecordCurrency, setNewRecordCurrency] = useState('USD');
   const [newRecordDate, setNewRecordDate] = useState(new Date().toISOString().split('T')[0]);
 
@@ -103,7 +111,6 @@ export default function SupplierDetails() {
       entity_id: numericSupplierId,
       type: 'raw_material', 
       amount: 1, 
-      // جعل السطر الجديد يأخذ العملة المفلترة حالياً بدلاً من فرض USD دائماً
       currency: filterCurrency !== 'all' ? filterCurrency : 'USD', 
       date: new Date().toISOString().split('T')[0], 
       description: 'New Raw Material Entry', 
@@ -118,7 +125,6 @@ export default function SupplierDetails() {
       const response = await axios.post('/api/transactions', newTxPayload);
       if (response.status === 201 || response.status === 200) {
         toast.success("Row added successfully");
-        // لم نعد بحاجة لإعادة تعيين الفلاتر إلى 'all' لأن السطر الجديد يرث الفلتر الحالي وسيظهر فوراً
         await fetchTxs();
       }
     } catch (error) {
@@ -126,73 +132,61 @@ export default function SupplierDetails() {
     }
   };
 
-  const handleTxUpdate = async (txId: string | number, field: keyof Transaction, value: any) => {
+  const handleTxUpdate = async (txId: string | number, field: string, value: any) => {
     let previousTransactions: Transaction[] = [];
     let payloadToSend: any = null;
 
-    const dbFieldsMap: Record<string, string> = {
-      date: 'date',
-      description: 'description',
-      currency: 'currency',
-      amount: 'amount',
-      type: 'type',
-      relatedId: 'related_id',
-      blNumber: 'bl_number',
-      weightInTons: 'weight_in_tons',
-      pricePerTon: 'price_per_ton',
-      otherCost: 'other_cost'
-    };
+setTransactions(prev => {
+  previousTransactions = [...prev];
+  return prev.map(t => {
+    if (String(t.id) === String(txId)) {
+      // 1. احسب الـ amount الجديد أولاً في متغير جانبي
+      const currentWeight = Number(field === 'weightInTons' ? value : (t.weightInTons || 0));
+      const currentPrice = Number(field === 'pricePerTon' ? value : (t.pricePerTon || 0));
+      
+      let finalAmount = t.amount;
+      if (t.type === 'raw_material') {
+        const calculated = currentWeight * currentPrice;
+        finalAmount = calculated > 0 ? calculated : (field === 'amount' ? Number(value) : (t.amount || 1));
+      } else {
+        if (field === 'amount') finalAmount = Number(value);
+      }
 
-    setTransactions(prev => {
-      previousTransactions = [...prev];
-      return prev.map(t => {
-        if (String(t.id) === String(txId)) {
-          // 1. تحديث الكائن بتبديل الحقل المعدل
-          const updatedTx = { ...t, [field]: value };
+      // 2. جهز الـ related_id
+      let finalRelatedId = null;
+      const currentRelatedId = field === 'relatedId' ? value : t.relatedId;
+      if (currentRelatedId && currentRelatedId !== 'none') {
+        finalRelatedId = parseInt(String(currentRelatedId), 10);
+      }
 
-          // 2. حل مشكلة الـ undefined: نقرأ القيمة من الـ camelCase أو الـ snake_case لضمان عدم تصفيرها
-          const getVal = (camel: string, snake: string) => {
-            if (field === camel) return value;
-            return (updatedTx as any)[camel] !== undefined ? (updatedTx as any)[camel] : (updatedTx as any)[snake];
-          };
+      // 3. أنشئ Payload نقي للـ API
+      payloadToSend = {
+        date: field === 'date' ? value : t.date,
+        description: field === 'description' ? value : t.description,
+        currency: field === 'currency' ? value : t.currency,
+        amount: finalAmount,
+        type: t.type || 'raw_material',
+        related_id: finalRelatedId,
+        bl_number: field === 'blNumber' ? value : (t.blNumber || '-'),
+        weight_in_tons: currentWeight,
+        price_per_ton: currentPrice,
+        other_cost: field === 'otherCost' ? value : (t.otherCost || 0)
+      };
 
-          const currentWeight = Number(getVal('weightInTons', 'weight_in_tons')) || 0;
-          const currentPrice = Number(getVal('pricePerTon', 'price_per_ton')) || 0;
-          const currentOtherCost = Number(getVal('otherCost', 'other_cost')) || 0;
-
-          // حساب الإجمالي تلقائياً إذا كان نوع المعاملة خامات
-          if (updatedTx.type === 'raw_material') {
-            const calculated = currentWeight * currentPrice;
-            updatedTx.amount = calculated > 0 ? calculated : (field === 'amount' ? Number(value) : updatedTx.amount || 1);
-          } else {
-            if (field === 'amount') updatedTx.amount = Number(value);
-          }
-
-          // 3. بناء الـ Payload النهائي الموجه للـ API بكافة الحقول المتوفرة لمنع التصفير
-          payloadToSend = {
-            date: getVal('date', 'date'),
-            description: getVal('description', 'description'),
-            currency: getVal('currency', 'currency'),
-            amount: updatedTx.amount,
-            type: updatedTx.type || 'raw_material',
-            related_id: field === 'relatedId' 
-              ? (value && value !== 'none' ? parseInt(value, 10) : null)
-              : (updatedTx.relatedId && updatedTx.relatedId !== 'none' ? parseInt(updatedTx.relatedId, 10) : (updatedTx as any).related_id || null),
-            bl_number: getVal('blNumber', 'bl_number') || '-',
-            weight_in_tons: currentWeight,
-            price_per_ton: currentPrice,
-            other_cost: currentOtherCost
-          };
-
-          return updatedTx;
-        }
-        return t;
-      });
-    });
+      // 4. ارجع أوبجكت جديد تماماً وبطريقة آمنة لـ React
+      return {
+        ...t,
+        [field]: value,
+        amount: finalAmount,
+        relatedId: currentRelatedId
+      };
+    }
+    return t;
+  });
+});
 
     if (!payloadToSend) return;
     try {
-      // إرسال الـ Payload الكامل الذي يحافظ على القيم القديمة والجديدة معاً
       await axios.put(`/api/transactions/${txId}`, payloadToSend);
     } catch (error) {
       toast.error("Failed to update on server. Reverting...");
@@ -246,7 +240,7 @@ export default function SupplierDetails() {
       return false;
     }).map(t => ({
       ...t,
-      relatedId: (t as any).related_id ? String((t as any).related_id) : t.relatedId,
+      relatedId: (t as any).related_id ? String((t as any).related_id) : (t.relatedId ? String(t.relatedId) : 'none'),
       blNumber: (t as any).bl_number || t.blNumber,
       weightInTons: (t as any).weight_in_tons !== undefined ? (t as any).weight_in_tons : t.weightInTons,
       pricePerTon: (t as any).price_per_ton !== undefined ? (t as any).price_per_ton : t.pricePerTon,
@@ -314,8 +308,7 @@ export default function SupplierDetails() {
       return;
     }
 
-    const parsedRecordJobId = newRecordJobId && newRecordJobId !== 'none' ? parseInt(newRecordJobId, 10) : null;
-    const numericRecordJobId = (parsedRecordJobId && !isNaN(parsedRecordJobId)) ? parsedRecordJobId : null;
+    const numericRecordJobId = newRecordJobId && newRecordJobId !== 'none' ? parseInt(newRecordJobId, 10) : null;
 
     const newTxPayload = {
       entity_id: numericSupplierId,
@@ -338,7 +331,7 @@ export default function SupplierDetails() {
         toast.success("Payment record added successfully");
         setNewRecordAmount('');
         setNewRecordDesc('');
-        setNewRecordJobId('');
+        setNewRecordJobId('none');
         await fetchTxs();
       }
     } catch (error) {
@@ -436,7 +429,7 @@ export default function SupplierDetails() {
                 <th className="px-4 py-3 text-right font-medium text-muted-foreground w-28">Supplier Cost</th>
                 <th className="px-4 py-3 text-right font-medium text-muted-foreground w-24">Other Cost</th>
                 <th className="px-4 py-3 text-right font-medium text-muted-foreground w-28 text-destructive">Total Cost</th>
-                <th className="px-4 py-3 text-right font-medium text-muted-foreground w-28 text-success">Payment Given</th>
+                <th className="px-4 py-3 text-right font-medium text-muted-foreground w-28 text-green-600">Payment Given</th>
                 <th className="px-4 py-3 text-center font-medium text-muted-foreground w-16"></th>
               </tr>
             </thead>
@@ -447,13 +440,13 @@ export default function SupplierDetails() {
                 supplierTransactions.map((tx) => (
                   <tr key={tx.id} className="hover:bg-muted/30 transition-colors group">
                     <td className="px-4 py-2">
-                      {tx.isAuto ? <span className="text-xs text-muted-foreground">{formatDate(tx.date)}</span> : <DatePicker value={tx.date ? tx.date.split('T')[0] : ''} onChange={(v) => handleTxUpdate(tx.id, 'date', v)} className="w-28 h-8 text-xs bg-transparent border-transparent hover:border-input focus:border-input p-1" />}
+                      {tx.isAuto ? <span className="text-xs text-muted-foreground">{formatDate(tx.date)}</span> : <DatePicker value={tx.date ? tx.date.split('T')[0] : new Date().toISOString().split('T')[0]} onChange={(v) => handleTxUpdate(tx.id, 'date', v)} className="w-28 h-8 text-xs bg-transparent border-transparent hover:border-input focus:border-input p-1" />}
                     </td>
                     <td className="px-4 py-2">
                       {tx.isAuto ? (
                         <span className="text-xs text-muted-foreground block w-40 overflow-hidden text-ellipsis whitespace-nowrap">{jobs.find(j => String(j.id) === String(tx.relatedId))?.title || 'Job'}</span>
                       ) : (
-                        <Select value={tx.relatedId ? String(tx.relatedId) : 'none'} onValueChange={(v) => handleTxUpdate(tx.id, 'relatedId', v === 'none' ? null : v)}>
+                        <Select value={tx.relatedId ? String(tx.relatedId) : 'none'} onValueChange={(v) => handleTxUpdate(tx.id, 'relatedId', v)}>
                           <SelectTrigger className="h-8 text-xs border-transparent hover:border-input bg-transparent"><SelectValue placeholder="Select Job" /></SelectTrigger>
                           <SelectContent>
                             <SelectItem value="none">General (No Job)</SelectItem>
@@ -485,7 +478,7 @@ export default function SupplierDetails() {
                       {tx.isAuto ? (
                         <span className="text-xs font-medium text-muted-foreground">{tx.currency}</span>
                       ) : (
-                        <Select value={tx.currency} onValueChange={(v) => handleTxUpdate(tx.id, 'currency', v)}>
+                        <Select value={tx.currency || 'USD'} onValueChange={(v) => handleTxUpdate(tx.id, 'currency', v)}>
                           <SelectTrigger className="h-8 text-xs border-transparent hover:border-input bg-transparent"><SelectValue /></SelectTrigger>
                           <SelectContent>
                             <SelectItem value="USD">USD</SelectItem>
@@ -550,7 +543,7 @@ export default function SupplierDetails() {
                 </tr>
                 <tr className="border-t">
                   <td colSpan={9} className="px-4 py-4 text-right uppercase">Total Payment Given:</td>
-                  <td colSpan={3} className="px-4 py-4 text-center text-lg text-success border-l">
+                  <td colSpan={3} className="px-4 py-4 text-center text-lg text-green-600 border-l">
                     {formatBalanceObj(totalPaymentsObj)}
                   </td>
                 </tr>
@@ -576,7 +569,7 @@ export default function SupplierDetails() {
             </div>
             <div className="grid gap-2">
               <Label>Currency</Label>
-              <Select value={newRecordCurrency} onValueChange={setNewRecordCurrency}>
+             <Select value={newRecordCurrency} onValueChange={setNewRecordCurrency}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="USD">USD</SelectItem>
@@ -600,10 +593,10 @@ export default function SupplierDetails() {
               <Input value={newRecordDesc} onChange={(e) => setNewRecordDesc(e.target.value)} placeholder="e.g. Cash payment" />
             </div>
           </div>
-          <DialogFooter>
+          <div className="flex justify-end gap-2">
             <Button variant="outline" onClick={() => setIsAddRecordOpen(false)}>Cancel</Button>
             <Button onClick={handleAddRecord}>Save Record</Button>
-          </DialogFooter>
+          </div>
         </DialogContent>
       </Dialog>
     </div>
