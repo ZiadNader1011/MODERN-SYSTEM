@@ -1,19 +1,17 @@
 import { useMemo, useState, useEffect, useRef } from 'react';
 import { useParams as useRouterParams, useNavigate as useRouterNavigate } from 'react-router-dom';
-import { useTranslation } from '../../node_modules/react-i18next';
+import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
+
 import {
-  getClients, getJobs, getTransactions, getContainers, getProducts,
-  formatDate, formatCurrency, formatBalanceObj, Job, saveJobs, generateId, saveTransactions, Transaction
+  formatDate, formatBalanceObj, Job, Transaction
 } from '@/data/store';
 import { Button } from '@/components/ui/button';
-import { ArrowLeft, FileText, Printer, Plus, Trash2, Search } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
+import { ArrowLeft, Printer, Plus, Trash2, Loader2 } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Label } from '@/components/ui/label';
-import { Input } from '@/components/ui/input';
 import { DatePicker } from '@/components/DatePicker';
 import { ClientInvoicePrintForm } from '@/components/ClientInvoicePrintForm';
+import { supabase } from '@/utils/supabaseClient';
 
 function EditableCell({ value, type = 'text', onSave, className = '', placeholder = '' }: { value: string | number | undefined, type?: string, onSave: (val: string | number) => void, className?: string, placeholder?: string }) {
   const [val, setVal] = useState(value !== undefined && value !== null ? value : '');
@@ -95,44 +93,72 @@ export default function ClientDetails() {
   const [invoicePrintOpen, setInvoicePrintOpen] = useState(false);
   const [selectedTxForPrint, setSelectedTxForPrint] = useState<Transaction | null>(null);
 
-  const containers = useMemo(() => getContainers(), []);
-  const allProducts = useMemo(() => getProducts(), []);
-  
-  const [clients, setClients] = useState(() => getClients());
-  const [jobs, setJobs] = useState(() => getJobs());
-  const [transactions, setTransactions] = useState(() => getTransactions());
-
-  // مراقبة حية ومستمرة لمزامنة الكاش لمنع استرجاع الموتى
-  useEffect(() => {
-    const syncInterval = setInterval(() => {
-      setClients(getClients());
-      setJobs(getJobs());
-      setTransactions(getTransactions());
-    }, 1000); // تحديث هادئ كل ثانية لمنع تعليق البيانات الممسوحة
-
-    return () => clearInterval(syncInterval);
-  }, []);
-
-  const client = clients.find(c => c.id === id);
-
-  // حماية صارمة: إذا تم حذف العميل من لوحة التحكم، اخرج فوراً لمنع الـ Form من محاولة إعادة الحفظ الخلفي
-  useEffect(() => {
-    if (clients.length > 0 && !client) {
-      console.log("🚨 Client was deleted from database. Redirecting away immediately...");
-      toast.error("هذا العميل لم يعد موجوداً في قاعدة البيانات");
-      navigate('/clients', { replace: true });
-    }
-  }, [clients, client, navigate]);
+  // حالات البيانات القادمة من السيرفر
+  const [client, setClient] = useState<any>(null);
+  const [jobs, setJobs] = useState<Job[]>([]);
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [allProducts, setAllProducts] = useState<any[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
 
   const [filterJobId, setFilterJobId] = useState<string>('all');
   const [filterCurrency, setFilterCurrency] = useState<string>('all');
 
-  const handleAddExcelRow = () => {
-    const newTx: Transaction = {
-      id: generateId(),
+  // جلب البيانات من Supabase
+  const fetchData = async () => {
+    if (!id) return;
+    try {
+      setIsLoading(true);
+      
+      // جلب بيانات العميل
+      const { data: clientData, error: clientErr } = await supabase.from('clients').select('*').eq('id', id).single();
+      if (clientErr || !clientData) {
+        toast.error("هذا العميل لم يعد موجوداً في قاعدة البيانات");
+        navigate('/clients', { replace: true });
+        return;
+      }
+      setClient(clientData);
+
+      // جلب العمليات المرتبطة بالعميل
+      const { data: jobsData } = await supabase.from('jobs').select('*').eq('clientId', id);
+      setJobs(jobsData || []);
+
+      // جلب الحركات المالية للمشروع بالكامل لفرزها
+      const { data: txData } = await supabase.from('transactions').select('*');
+      setTransactions(txData || []);
+
+      // جلب المنتجات للأسماء الاوتوماتيكية
+      const { data: prodData } = await supabase.from('products').select('*');
+      setAllProducts(prodData || []);
+
+    } catch (error) {
+      console.error("Error fetching data from Supabase:", error);
+      toast.error("حدث خطأ أثناء تحميل البيانات");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchData();
+
+    // ميزة المزامنة الحية (Realtime) من Supabase كبديل للـ setInterval المجهد
+    const txSubscription = supabase
+      .channel('schema-db-changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'transactions' }, () => { fetchData(); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'jobs' }, () => { fetchData(); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'clients' }, () => { fetchData(); })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(txSubscription);
+    };
+  }, [id]);
+
+  const handleAddExcelRow = async () => {
+    const newTx = {
       relatedId: id || '',
       entityId: id,
-      type: 'raw_material', // Cost by default
+      type: 'raw_material', 
       amount: 0,
       currency: 'USD',
       date: new Date().toISOString().slice(0, 10),
@@ -142,70 +168,83 @@ export default function ClientDetails() {
       blNumber: '',
       createdAt: new Date().toISOString()
     };
-    const updated = [...transactions, newTx];
-    saveTransactions(updated);
-    setTransactions(updated);
+
+    const { data, error } = await supabase.from('transactions').insert([newTx]).select();
+    
+    if (error) {
+      toast.error("فشل إضافة سطر جديد");
+    } else {
+      setTransactions(prev => [...prev, data[0]]);
+      toast.success("تم إضافة سطر جديد بنجاح");
+    }
   };
 
-  const handleTxUpdate = (txId: string, field: keyof Transaction, value: any) => {
-    let updatedTx: Transaction | null = null;
-    const updated = transactions.map(t => {
-      if (t.id === txId) {
-        const newT = { ...t, [field]: value };
-        if (field === 'weightInTons' || field === 'pricePerTon') {
-          newT.amount = (Number(newT.weightInTons) || 0) * (Number(newT.pricePerTon) || 0);
-        }
-        updatedTx = newT;
-        return newT;
-      }
-      return t;
-    });
+  const handleTxUpdate = async (txId: string, field: keyof Transaction, value: any) => {
+    let updatedFields: any = { [field]: value };
+    
+    // العثور على المعاملة الحالية لحساب الإجمالي إذا لزم الأمر
+    const currentTx = transactions.find(t => t.id === txId);
+    if (!currentTx) return;
 
-    // Check if job linkage changed
+    if (field === 'weightInTons' || field === 'pricePerTon') {
+      const weight = field === 'weightInTons' ? Number(value) : (Number(currentTx.weightInTons) || 0);
+      const price = field === 'pricePerTon' ? Number(value) : (Number(currentTx.pricePerTon) || 0);
+      updatedFields.amount = weight * price;
+    }
+
+    if (field === 'relatedId' && value === 'none') {
+      updatedFields.relatedId = id || '';
+    }
+
+    // تحديث البيانات في الـ Supabase
+    const { error } = await supabase.from('transactions').update(updatedFields).eq('id', txId);
+    
+    if (error) {
+      toast.error("فشل تحديث البيانات");
+      return;
+    }
+
+    // المنطق الخاص بربط الوظيفة بالعميل تلقائياً
     if (field === 'relatedId' && value !== id && value !== 'none') {
       const job = jobs.find(j => j.id === value);
       if (job && job.clientId !== id) {
-        const updatedJobs = jobs.map(j => j.id === value ? { ...j, clientId: id } : j);
-        saveJobs(updatedJobs);
-        setJobs(updatedJobs);
+        await supabase.from('jobs').update({ clientId: id }).eq('id', value);
         toast.success('Job linked to this client.');
       }
     }
-    if (field === 'relatedId' && value === 'none') {
-      if (updatedTx) (updatedTx as Transaction).relatedId = id || '';
-    }
 
-    if (updatedTx && (field === 'variety' || field === 'caliber' || field === 'grade') && (updatedTx as Transaction).relatedId && (updatedTx as Transaction).relatedId !== 'none' && (updatedTx as Transaction).relatedId !== id) {
-      const job = jobs.find(j => j.id === updatedTx!.relatedId);
-      if (job) {
-        const updatedJobs = jobs.map(j => {
-          if (j.id === job.id) {
-            const newProds = [...j.products];
-            if (newProds.length > 0) {
-              newProds[0] = { ...newProds[0], [field]: value };
-            } else {
-              newProds.push({ productId: '', quantity: 0, unitPrice: 0, packages: 0, [field]: value });
-            }
-            return { ...j, products: newProds };
-          }
-          return j;
-        });
-        saveJobs(updatedJobs);
-        setJobs(updatedJobs);
+    // تحديث المنتج بالوظيفة تلقائياً لو تم التعديل من الـ Excel Table
+if (currentTx && (field === 'variety' || field === 'caliber' || field === 'grade')) {
+  // استخدام المعرف المرتبط بالمعاملة الحالية مباشرة دون فحص إضافي
+  const targetRelatedId = currentTx.relatedId;
+
+  if (targetRelatedId && targetRelatedId !== 'none' && targetRelatedId !== id) {
+    const job = jobs.find(j => j.id === targetRelatedId);
+    if (job) {
+      const newProds = [...(job.products || [])];
+      if (newProds.length > 0) {
+        newProds[0] = { ...newProds[0], [field]: value };
+      } else {
+        newProds.push({ productId: '', quantity: 0, unitPrice: 0, packages: 0, [field]: value });
       }
+      await supabase.from('jobs').update({ products: newProds }).eq('id', job.id);
     }
+  }
+}
 
-    saveTransactions(updated);
-    setTransactions(updated);
+    fetchData(); // لإعادة التحميل والمزامنة الدقيقة
   };
 
-  const handleDeleteTx = (txId: string) => {
-    const updated = transactions.filter(t => t.id !== txId);
-    saveTransactions(updated);
-    setTransactions(updated);
+  const handleDeleteTx = async (txId: string) => {
+    const { error } = await supabase.from('transactions').delete().eq('id', txId);
+    if (error) {
+      toast.error("فشل حذف السطر");
+    } else {
+      setTransactions(prev => prev.filter(t => t.id !== txId));
+      toast.success("تم الحذف بنجاح");
+    }
   };
 
-  // Get all operations involving this client (Export usually)
   const clientJobs = useMemo(() => {
     return jobs.filter(j => j.clientId === id).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   }, [jobs, id]);
@@ -213,9 +252,7 @@ export default function ClientDetails() {
   const clientTransactions = useMemo(() => {
     const clientJobIds = jobs.filter(j => j.clientId === id).map(j => j.id);
     let manualTxs = transactions.filter(t => {
-      if (t.entityId) {
-        return t.entityId === id;
-      }
+      if (t.entityId) return t.entityId === id;
       if (t.relatedId === id) return true;
       if (t.relatedId && clientJobIds.includes(t.relatedId)) {
         return t.type === 'incoming';
@@ -238,7 +275,7 @@ export default function ClientDetails() {
             autoTxs.push({
               id: `auto-job-${job.id}-prod-${idx}`,
               relatedId: job.id,
-              type: 'raw_material', // In Client Ledger, 'raw_material' represents a charge
+              type: 'raw_material',
               amount: finalVal,
               currency: c,
               date: job.createdAt,
@@ -270,14 +307,8 @@ export default function ClientDetails() {
     });
 
     let allTxs = [...manualTxs, ...autoTxs];
-
-    if (filterJobId !== 'all') {
-      allTxs = allTxs.filter(t => t.relatedId === filterJobId);
-    }
-
-    if (filterCurrency !== 'all') {
-      allTxs = allTxs.filter(t => (t.currency || 'USD') === filterCurrency);
-    }
+    if (filterJobId !== 'all') allTxs = allTxs.filter(t => t.relatedId === filterJobId);
+    if (filterCurrency !== 'all') allTxs = allTxs.filter(t => (t.currency || 'USD') === filterCurrency);
 
     return allTxs.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
   }, [transactions, jobs, id, filterJobId, filterCurrency, allProducts]);
@@ -287,7 +318,15 @@ export default function ClientDetails() {
     setInvoicePrintOpen(true);
   };
 
-  // تم تجميع الـ الحسابات وحالة الحماية المبكرة لتعمل بسلاسة بعد الـ Hooks
+  if (isLoading) {
+    return (
+      <div className="p-8 flex flex-col items-center justify-center gap-2">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        <p className="text-sm text-muted-foreground">جاري تحميل كشف الحساب...</p>
+      </div>
+    );
+  }
+
   if (!client) {
     return (
       <div className="p-8 text-center">
