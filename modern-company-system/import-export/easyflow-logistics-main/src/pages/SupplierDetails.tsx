@@ -111,41 +111,40 @@ export default function SupplierDetails() {
   const [newRecordDate, setNewRecordDate] = useState(new Date().toISOString().split('T')[0]);
 
   const handleAddExcelRow = async () => {
-    const numericSupplierId = id ? parseInt(id, 10) : null;
+  const numericSupplierId = id ? parseInt(id, 10) : null;
 
-    if (!numericSupplierId || isNaN(numericSupplierId)) {
-      toast.error("Invalid Supplier ID");
-      return;
-    }
+  if (!numericSupplierId || isNaN(numericSupplierId)) {
+    toast.error("Invalid Supplier ID");
+    return;
+  }
 
-    const parsedJobId = filterJobId !== 'all' ? parseInt(filterJobId, 10) : null;
-    const numericJobId = (parsedJobId && !isNaN(parsedJobId)) ? parsedJobId : null;
+  const parsedJobId = filterJobId !== 'all' ? parseInt(filterJobId, 10) : null;
+  const numericJobId = (parsedJobId && !isNaN(parsedJobId)) ? parsedJobId : null;
 
-    const newTxPayload = {
-      entity_id: numericSupplierId,
-      type: 'raw_material', 
-      amount: 0, 
-      currency: filterCurrency !== 'all' ? filterCurrency : 'USD', 
-      date: new Date().toISOString().split('T')[0], 
-      description: 'New Raw Material Entry', 
-      bl_number: '-', 
-      weight_in_tons: 0, 
-      price_per_ton: 0,  
-      other_cost: 0,
-      related_id: numericJobId 
-    };
-
-    try {
-      const response = await axios.post('/api/transactions', newTxPayload);
-      if (response.status === 201 || response.status === 200) {
-        toast.success("Row added successfully");
-        // إعادة جلب البيانات فوراً لضمان مزامنة المعرفات من السيرفر بشكل سليم
-        await fetchTxs();
-      }
-    } catch (error) {
-      toast.error("Failed to save to backend");
-    }
+  const newTxPayload = {
+    entity_id: numericSupplierId,
+    type: 'raw_material', 
+    amount: 1, // 💡 تم تغييرها من 0 إلى 1 لتخطي شرط الـ positive number بالسيرفر
+    currency: filterCurrency !== 'all' ? filterCurrency : 'USD', 
+    date: new Date().toISOString().split('T')[0], 
+    description: 'New Raw Material Entry', 
+    bl_number: '-', 
+    weight_in_tons: 0, 
+    price_per_ton: 0,  
+    other_cost: 0,
+    related_id: numericJobId 
   };
+
+  try {
+    const response = await axios.post('/api/transactions', newTxPayload);
+    if (response.status === 201 || response.status === 200) {
+      toast.success("Row added successfully");
+      await fetchTxs();
+    }
+  } catch (error) {
+    toast.error("Failed to save to backend");
+  }
+};
 
   const handleTxUpdate = async (txId: string | number, field: keyof Transaction, value: any) => {
     const previousTransactions = [...transactions];
