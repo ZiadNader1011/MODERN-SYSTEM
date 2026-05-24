@@ -107,19 +107,19 @@ export default function SupplierDetails() {
     const parsedJobId = filterJobId !== 'all' ? parseInt(filterJobId, 10) : null;
     const numericJobId = (parsedJobId && !isNaN(parsedJobId)) ? parsedJobId : null;
 
-    const newTxPayload = {
-      entity_id: numericSupplierId,
-      type: 'raw_material', 
-      amount: 1, 
-      currency: filterCurrency !== 'all' ? filterCurrency : 'USD', 
-      date: new Date().toISOString().split('T')[0], 
-      description: 'New Raw Material Entry', 
-      bl_number: '-', 
-      weight_in_tons: 0, 
-      price_per_ton: 0,  
-      other_cost: 0,
-      related_id: numericJobId 
-    };
+ const newTxPayload = {
+  supplierId: numericSupplierId, // بدلاً من entity_id
+  jobId: numericJobId,           // بدلاً من related_id
+  type: 'raw_material', 
+  amount: 1, 
+  currency: filterCurrency !== 'all' ? filterCurrency : 'USD', 
+  date: new Date().toISOString().split('T')[0], 
+  description: 'New Raw Material Entry', 
+  blNumber: '-', // تأكد إذا كان السيرفر يتوقعها camelCase أو snake_case
+  weightInTons: 0, 
+  pricePerTon: 0,  
+  otherCost: 0
+};
 
     try {
       const response = await axios.post('/api/transactions', newTxPayload);
