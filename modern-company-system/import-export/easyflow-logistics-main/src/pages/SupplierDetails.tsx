@@ -15,7 +15,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { DatePicker } from '@/components/DatePicker';
-import axios from 'axios';
+import axios from '@/api/axios';
 
 
 interface EditableCellProps {
