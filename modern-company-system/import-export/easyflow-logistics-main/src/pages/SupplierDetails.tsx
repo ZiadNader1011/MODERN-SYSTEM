@@ -110,41 +110,42 @@ export default function SupplierDetails() {
   const [newRecordCurrency, setNewRecordCurrency] = useState('USD');
   const [newRecordDate, setNewRecordDate] = useState(new Date().toISOString().split('T')[0]);
 
-  const handleAddExcelRow = async () => {
-  const numericSupplierId = id ? parseInt(id, 10) : null;
+const handleAddExcelRow = async () => {
+    const numericSupplierId = id ? parseInt(id, 10) : null;
 
-  if (!numericSupplierId || isNaN(numericSupplierId)) {
-    toast.error("Invalid Supplier ID");
-    return;
-  }
-
-  const parsedJobId = filterJobId !== 'all' ? parseInt(filterJobId, 10) : null;
-  const numericJobId = (parsedJobId && !isNaN(parsedJobId)) ? parsedJobId : null;
-
-  const newTxPayload = {
-    entity_id: numericSupplierId,
-    type: 'raw_material', 
-    amount: 1, // 💡 تم تغييرها من 0 إلى 1 لتخطي شرط الـ positive number بالسيرفر
-    currency: filterCurrency !== 'all' ? filterCurrency : 'USD', 
-    date: new Date().toISOString().split('T')[0], 
-    description: 'New Raw Material Entry', 
-    bl_number: '-', 
-    weight_in_tons: 0, 
-    price_per_ton: 0,  
-    other_cost: 0,
-    related_id: numericJobId 
-  };
-
-  try {
-    const response = await axios.post('/api/transactions', newTxPayload);
-    if (response.status === 201 || response.status === 200) {
-      toast.success("Row added successfully");
-      await fetchTxs();
+    if (!numericSupplierId || isNaN(numericSupplierId)) {
+      toast.error("Invalid Supplier ID");
+      return;
     }
-  } catch (error) {
-    toast.error("Failed to save to backend");
-  }
-};
+
+    const parsedJobId = filterJobId !== 'all' ? parseInt(filterJobId, 10) : null;
+    const numericJobId = (parsedJobId && !isNaN(parsedJobId)) ? parsedJobId : null;
+
+    const newTxPayload = {
+      entity_id: numericSupplierId,
+      type: 'raw_material', 
+      amount: 1, // الحد الأدنى المقبول بالسيرفر لتجنب خطأ الـ positive number
+      currency: filterCurrency !== 'all' ? filterCurrency : 'USD', 
+      date: new Date().toISOString().split('T')[0], 
+      description: 'New Raw Material Entry', 
+      bl_number: '-', 
+      weight_in_tons: 0, 
+      price_per_ton: 0,  
+      other_cost: 0,
+      related_id: numericJobId 
+    };
+
+    try {
+      const response = await axios.post('/api/transactions', newTxPayload);
+      if (response.status === 201 || response.status === 200) {
+        toast.success("Row added successfully");
+        // جلب البيانات من جديد لضمان نزول السطر الجديد في الجدول بالمعرف الصحيح
+        await fetchTxs();
+      }
+    } catch (error) {
+      toast.error("Failed to save to backend");
+    }
+  };
 
   const handleTxUpdate = async (txId: string | number, field: keyof Transaction, value: any) => {
     const previousTransactions = [...transactions];
@@ -152,13 +153,13 @@ export default function SupplierDetails() {
     let targetTx: any = null;
     const updated = transactions.map(t => {
       if (String(t.id) === String(txId)) {
-        const newT = { 
-          ...t, 
-          [field]: value
-        };
+        const newT = { ...t, [field]: value };
 
+        // حساب الـ amount تلقائياً بناءً على المدخلات
         if (field === 'weightInTons' || field === 'pricePerTon') {
-          newT.amount = (Number(newT.weightInTons) || 0) * (Number(newT.pricePerTon) || 0);
+          const calculated = (Number(newT.weightInTons) || 0) * (Number(newT.pricePerTon) || 0);
+          // 💡 إذا كانت النتيجة صفر، نجعلها 1 كحد أدنى لتفادي رفض السيرفر لها
+          newT.amount = calculated > 0 ? calculated : 1;
         }
         targetTx = newT;
         return newT;
@@ -182,22 +183,26 @@ export default function SupplierDetails() {
 
     const dbField = dbFieldsMap[field as string] || (field as string);
 
+    // تأمين الـ amount المراد إرساله للسيرفر
+    const finalAmount = targetTx && targetTx.amount > 0 ? targetTx.amount : 1;
+
     try {
       await axios.put(`/api/transactions/${txId}`, {
         [dbField]: value,
-        amount: targetTx.amount,
-        type: targetTx.type,
-        related_id: targetTx.relatedId ? parseInt(targetTx.relatedId, 10) : null,
-        bl_number: targetTx.blNumber || '-',
-        weight_in_tons: Number(targetTx.weightInTons) || 0,
-        price_per_ton: Number(targetTx.pricePerTon) || 0,
-        other_cost: Number(targetTx.otherCost) || 0
+        amount: finalAmount,
+        type: targetTx?.type || 'raw_material',
+        related_id: targetTx?.relatedId ? parseInt(targetTx.relatedId, 10) : null,
+        bl_number: targetTx?.blNumber || '-',
+        weight_in_tons: Number(targetTx?.weightInTons) || 0,
+        price_per_ton: Number(targetTx?.pricePerTon) || 0,
+        other_cost: Number(targetTx?.otherCost) || 0
       });
     } catch (error) {
-      toast.error("Failed to update on server");
+      toast.error("Failed to update on server. Reverting...");
+      // في حال فشل السيرفر، يتم استرجاع الحالة السابقة فوراً لتجنب تعليق الواجهة
       setTransactions(previousTransactions);
     }
-  }; 
+  };
 
   const handleDeleteTx = async (txId: string | number) => {
     const previousTransactions = [...transactions];
