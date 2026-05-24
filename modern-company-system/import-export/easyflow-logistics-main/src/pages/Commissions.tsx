@@ -28,28 +28,27 @@ export default function Commissions() {
   const [loading, setLoading] = useState(true);
 
   // 1️⃣ جلب البيانات مباشرة من الـ Supabase لمنع الـ 404 والـ RLS Block
-  const fetchCommissions = async () => {
+ const fetchCommissions = async () => {
     try {
       setLoading(true);
       
       const { data, error } = await supabase
-        .from('commissions') // تأكد من مطابقة اسم الجدول في Supabase لديك
+        .from('commissions')
         .select('*')
         .order('date', { ascending: false });
 
       if (error) throw error;
 
-      // تحويل وتنسيق الأعمدة لتطابق واجهة الـ TypeScript بالفرونت إند
       const formattedData: Commission[] = (data || []).map((row: any) => ({
         id: row.id,
         date: row.date,
-        clientName: row.client_name,
+        clientName: row.clientName || row.client_name || '',
         trader: row.trader,
-        qualityRepresentative: row.quality_representative || '',
+        qualityRepresentative: row.qualityRepresentative || row.quality_representative || '',
         product: row.product,
-        numberOfContainers: row.number_of_containers,
-        totalQuantityTon: row.total_quantity_ton,
-        commissionPerTon: row.commission_per_ton,
+        numberOfContainers: row.numberOfContainers !== undefined ? row.numberOfContainers : row.number_of_containers,
+        totalQuantityTon: row.totalQuantityTon !== undefined ? row.totalQuantityTon : row.total_quantity_ton,
+        commissionPerTon: row.commissionPerTon !== undefined ? row.commissionPerTon : row.commission_per_ton,
         currency: row.currency || 'USD',
         attachments: row.attachments || []
       }));
@@ -206,15 +205,21 @@ export default function Commissions() {
     const totalQty = Number(form.totalQuantityTon) || 0;
     const commPerTon = Number(form.commissionPerTon) || 0;
 
-    // تجهيز كائن البيانات ليتوافق مع أسماء حقول الجداول في سوبابيز
+    // لتفادي خطأ الكاش، سنرسل الحقول بالصيغتين (الـ snake_case والـ CamelCase) 
+    // وقاعدة البيانات ستأخذ ما يطابق مخططها تلقائياً بدون مشاكل
     const dbData: any = {
+      clientName: form.clientName,
       client_name: form.clientName,
       date: form.date,
       trader: form.trader,
+      qualityRepresentative: form.qualityRepresentative,
       quality_representative: form.qualityRepresentative,
       product: form.product,
+      numberOfContainers: Number(form.numberOfContainers) || 0,
       number_of_containers: Number(form.numberOfContainers) || 0,
+      totalQuantityTon: totalQty,
       total_quantity_ton: totalQty,
+      commissionPerTon: commPerTon,
       commission_per_ton: commPerTon,
       currency: form.currency,
       attachments: form.attachments 
@@ -222,7 +227,6 @@ export default function Commissions() {
     
     try {
       if (editing) {
-        // في حالة التعديل، نقوم بتحديث السجل بناءً على المعرف id الخاص به
         const { error } = await supabase
           .from('commissions')
           .update(dbData)
@@ -230,7 +234,6 @@ export default function Commissions() {
 
         if (error) throw error;
       } else {
-        // في حالة السجل الجديد، نقوم بعملية إدخال (Insert)
         const { error } = await supabase
           .from('commissions')
           .insert([dbData]);
