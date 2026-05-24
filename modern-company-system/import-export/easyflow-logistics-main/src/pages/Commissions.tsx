@@ -14,6 +14,7 @@ import { FileViewer } from '@/components/FileViewer';
 import { Plus, Pencil, Trash2, FileText, Calendar, Camera, Briefcase, UserCircle, Calculator } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/utils/supabaseClient';
+import axios from 'axios';
 
 export default function Commissions() {
   const { t } = useTranslation();
@@ -30,13 +31,15 @@ export default function Commissions() {
   const API_URL = import.meta.env.VITE_API_URL || 'https://modern-system-flame.vercel.app';
 
   // جلب البيانات عبر الـ API لتوحيد مصدر البيانات ومنع الـ RLS Block
-  const fetchCommissions = async () => {
+const fetchCommissions = async () => {
     try {
       setLoading(true);
-      const response = await fetch(`${API_URL}/commissions`);
-      if (!response.ok) throw new Error('Failed to fetch from server');
-      const data = await response.json();
-      setCommissions(data || []);
+      
+      // جلب البيانات باستخدام Axios من الرابط الصحيح
+      const response = await axios.get(`${API_URL}/api/commissions`);
+      
+      // في Axios، البيانات المستلمة تكون دائماً داخل response.data
+      setCommissions(response.data || []);
     } catch (error: any) {
       console.error('Error fetching commissions:', error);
       toast.error('Failed to load commissions from server');
