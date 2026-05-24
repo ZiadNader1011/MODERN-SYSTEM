@@ -75,13 +75,13 @@ export default function SupplierDetails() {
       .filter(t => {
         if (t.type === 'discount') return false;
 
-        const supplierId =
-          (t as any).supplier_id ||
-          (t as any).supplierId ||
-          (t as any).entity_id;
+     const supplierId =
+  (t as any).supplier_id ??
+  (t as any).supplierId ??
+  (t as any).entity_id;
 
         const relatedId =
-          (t as any).related_id ||
+          (t as any).related_id ??
           (t as any).relatedId;
 
         const belongsToSupplier =
@@ -125,19 +125,20 @@ export default function SupplierDetails() {
 
     try {
       const res = await axios.post('/transactions', payload);
+      console.log(res.data);
 
       // ربط المعرفات لضمان عدم اختفاء السطر فوراً من الـ useMemo
       const newTx = {
-        ...res.data,
-        supplierId,
-        supplier_id: supplierId,
-        entity_id: supplierId,
-        jobId,
-        related_id: jobId,
-        relatedId: jobId ? String(jobId) : 'none'
-      };
+  ...res.data,
+  supplierId: supplierId,
+  supplier_id: supplierId,
+  entity_id: supplierId,
+  related_id: jobId ?? null,
+  relatedId: jobId ? String(jobId) : null
+};
 
       setTransactions(prev => [...prev, newTx]);
+      console.log(newTx);
       toast.success("Row added");
     } catch {
       toast.error("Failed to add");
@@ -166,6 +167,7 @@ export default function SupplierDetails() {
 
     try {
       const res = await axios.post('/transactions', payload);
+      console.log(res.data);
 
       // تعديل ذكي: ربط المعرفات يدوياً هنا أيضاً لمنع اختفاء إيصال الدفع فوراً
       const newPayment = {
