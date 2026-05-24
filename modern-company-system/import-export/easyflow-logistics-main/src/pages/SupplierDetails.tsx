@@ -129,19 +129,22 @@ const handleAddExcelRow = () => {
       return;
     }
 
+    // نقوم بتعريف الكائن كـ any مؤقتاً لتخطي حماية الـ TypeScript إذا لم تكن قد حدثت الـ Interface في الـ store
     const newTx: any = {
-      id: generateId(), // معرف فريد مؤقت للفرونت إند
-      relatedId: String(numericSupplierId), // النظام القديم
-      
-      // الحقول الرقمية الصريحة المتوافقة مع Prisma Schema الجديدة:
+      id: generateId(), 
+      relatedId: id, // نتركها string لتطابق شروط الفلترة القديمة بالفرونت إند
+      entityId: id,  // للتوافق مع السطور اليدوية القديمة
+
+      // الحقول الرقمية الصريحة المطلوبة للـ Prisma Schema الجديدة في السيرفر:
       supplierId: numericSupplierId, 
       clientId: null,
       jobId: null,
 
-      type: 'raw_material', // مدعومة الآن في التعليقات داخل السيرفر
+      // تأكد من الحقول الأساسية لئلا يرفضها السيرفر بـ 400 (تجنب الـ null في الحقول الإلزامية)
+      type: 'raw_material', 
       amount: 0,
-      currency: filterCurrency !== 'all' ? filterCurrency : 'USD',
-      date: new Date().toISOString().split('T')[0], // صيغة YYYY-MM-DD النظيفة
+      currency: filterCurrency !== 'all' ? filterCurrency : 'USD', 
+      date: new Date().toISOString(), 
       description: 'New Raw Material Entry', 
       blNumber: '-', 
       weightInTons: 0,
@@ -150,16 +153,31 @@ const handleAddExcelRow = () => {
       createdAt: new Date().toISOString()
     };
 
+    // إذا كان هناك فلتر نشط لـ Job معين، نربطه رقمياً ونصياً لتفادي الـ 400
+    if (filterJobId !== 'all') {
+      newTx.relatedId = filterJobId;
+      newTx.jobId = parseInt(filterJobId, 10) || null;
+    }
+
     const updated = [...transactions, newTx];
     saveTransactions(updated);
     setTransactions(updated);
   };
 
   const handleTxUpdate = (txId: string, field: keyof Transaction, value: any) => {
-    let updatedTx: Transaction | null = null;
+    const numericSupplierId = id ? parseInt(id, 10) : null;
+    let updatedTx: any = null;
+
     const updated = transactions.map(t => {
       if (t.id === txId) {
-        const newT = { ...t, [field]: value };
+        // نضمن الحفاظ على حقول المعرفات الرقمية أثناء تعديل أي خلية لضمان عدم حدوث خطأ 400
+        const newT = { 
+          ...t, 
+          [field]: value,
+          supplierId: (t as any).supplierId || numericSupplierId,
+          jobId: (t as any).jobId || (t.relatedId && t.relatedId !== id ? parseInt(t.relatedId, 10) : null)
+        };
+
         if (field === 'weightInTons' || field === 'pricePerTon') {
           newT.amount = (Number(newT.weightInTons) || 0) * (Number(newT.pricePerTon) || 0);
         }
@@ -180,7 +198,10 @@ const handleAddExcelRow = () => {
       }
     }
     if (field === 'relatedId' && value === 'none') {
-      if (updatedTx) updatedTx.relatedId = id || '';
+      if (updatedTx) {
+        updatedTx.relatedId = id || '';
+        updatedTx.jobId = null;
+      }
     }
 
     saveTransactions(updated);
@@ -196,57 +217,64 @@ const handleAddExcelRow = () => {
 
   const supplier = suppliers.find(s => s.id === id);
 
-  const supplierTransactions = useMemo(() => {
-    const supplierJobIds = jobs.filter(j => j.supplierId === id).map(j => j.id);
-    const manualTxs = transactions.filter(t => {
-      if (t.entityId) {
-        return t.entityId === id;
-      }
-      if (t.type === 'discount') return false;
-      if (t.relatedId === id) return true;
-      if (t.relatedId && supplierJobIds.includes(t.relatedId)) {
-        // Only include raw_material if it's linked to the job.
-        // Do NOT include petty_cash or generic outgoing (which might be for shipping agents)
-        return t.type === 'raw_material';
-      }
-      return false;
-    });
-
-    const autoTxs: any[] = [];
-    const supplierJobsList = jobs.filter(j => j.supplierId === id);
+const supplierTransactions = useMemo(() => {
+  const numericSupplierId = id ? parseInt(id, 10) : null;
+  const supplierJobIds = jobs.filter(j => j.supplierId === id).map(j => j.id);
+  
+  const manualTxs = transactions.filter(t => {
+    if (t.type === 'discount') return false;
     
-    supplierJobsList.forEach(job => {
-      const grossCost = job.rawMaterialCost || ((Number(job.rawMaterialWeight) || 0) * (Number(job.rawMaterialPricePerTon) || 0));
-      const suppDisc = job.supplierDiscountPercentage || 0;
-      const cost = grossCost - (grossCost * (suppDisc / 100));
-      autoTxs.push({
-        id: `auto-job-${job.id}`,
-        relatedId: job.id,
-        type: 'raw_material',
-        amount: cost,
-        otherCost: Number(job.pettyCash) || 0,
-        currency: job.currency,
-        date: job.createdAt,
-        description: `Auto Job Cost: ${job.title}`,
-        weightInTons: job.rawMaterialWeight || 0,
-        pricePerTon: job.rawMaterialPricePerTon || 0,
-        blNumber: job.blNumber || '',
-        isAuto: true
-      });
-    });
+    // التحقق الأساسي: هل السطر ينتمي لهذا المورد؟ (سواء بالنظام الجديد أو القديم)
+    const isBelongsToSupplier = 
+      t.supplierId === numericSupplierId || 
+      t.entityId === id || 
+      t.relatedId === id;
 
-    let allTxs = [...manualTxs, ...autoTxs];
-    
-    if (filterJobId !== 'all') {
-      allTxs = allTxs.filter(t => t.relatedId === filterJobId);
+    if (isBelongsToSupplier) return true;
+
+    // التحقق من العمليات المرتبطة بـ Jobs التابعة لهذا المورد
+    if (t.relatedId && supplierJobIds.includes(t.relatedId)) {
+      return t.type === 'raw_material';
     }
     
-    if (filterCurrency !== 'all') {
-      allTxs = allTxs.filter(t => (t.currency || 'USD') === filterCurrency);
-    }
-    
-    return allTxs.sort((a,b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-  }, [transactions, jobs, id, filterJobId, filterCurrency]);
+    return false;
+  });
+
+  const autoTxs: any[] = [];
+  const supplierJobsList = jobs.filter(j => j.supplierId === id);
+  
+  supplierJobsList.forEach(job => {
+    const grossCost = job.rawMaterialCost || ((Number(job.rawMaterialWeight) || 0) * (Number(job.rawMaterialPricePerTon) || 0));
+    const suppDisc = job.supplierDiscountPercentage || 0;
+    const cost = grossCost - (grossCost * (suppDisc / 100));
+    autoTxs.push({
+      id: `auto-job-${job.id}`,
+      relatedId: job.id,
+      type: 'raw_material',
+      amount: cost,
+      otherCost: Number(job.pettyCash) || 0,
+      currency: job.currency,
+      date: job.createdAt,
+      description: `Auto Job Cost: ${job.title}`,
+      weightInTons: job.rawMaterialWeight || 0,
+      pricePerTon: job.rawMaterialPricePerTon || 0,
+      blNumber: job.blNumber || '',
+      isAuto: true
+    });
+  });
+
+  let allTxs = [...manualTxs, ...autoTxs];
+  
+  if (filterJobId !== 'all') {
+    allTxs = allTxs.filter(t => t.relatedId === filterJobId);
+  }
+  
+  if (filterCurrency !== 'all') {
+    allTxs = allTxs.filter(t => (t.currency || 'USD') === filterCurrency);
+  }
+  
+  return allTxs.sort((a,b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+}, [transactions, jobs, id, filterJobId, filterCurrency]);
 
   const supplierJobs = useMemo(() => {
     return jobs.filter(j => j.supplierId === id).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());

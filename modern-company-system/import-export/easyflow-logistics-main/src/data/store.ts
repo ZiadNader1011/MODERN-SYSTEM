@@ -315,6 +315,9 @@ export interface Transaction {
   bank?: string;
   attachmentUrl?: string;
   createdAt: string;
+  supplierId?: number | null;
+  clientId?: number | null;
+  jobId?: number | null;
 }
 
 export interface UploadedFile {
