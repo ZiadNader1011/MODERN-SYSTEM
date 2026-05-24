@@ -193,24 +193,26 @@ export default function Operations() {
   };
 
   const handleSave = async () => {
-    const recordId = editing ? editing.id : generateId();
     const finalJobId = form.jobId && form.jobId !== 'none' ? form.jobId : null;
+ const dbData: any = {
+  operation_date: form.operationDate || null,      
+  loading_date: form.loadingDate || null,          
+  job_id: finalJobId,                              
+  client_name: form.clientName || '',                    
+  product: form.product || '',
+  quantity: form.quantity ? String(form.quantity) : null,
+  number_of_containers: form.numberOfContainers || null, 
+  container_number: form.containerNumber || null,       
+  responsible_person: form.responsiblePerson || null,   
+  quality_representative: form.qualityRepresentative || null, 
+  notes: form.notes || '',
+  attachments: form.attachments || []
+};
 
-    const dbData = {
-      id: recordId,
-      operation_date: form.operationDate || null,      
-      loading_date: form.loadingDate || null,          
-      job_id: finalJobId,                              
-      client_name: form.clientName || '',                    
-      product: form.product || '',
-      quantity: form.quantity ? String(form.quantity) : null,
-      number_of_containers: form.numberOfContainers || null, 
-      container_number: form.containerNumber || null,       
-      responsible_person: form.responsiblePerson || null,   
-      quality_representative: form.qualityRepresentative || null, 
-      notes: form.notes || '',
-      attachments: form.attachments || []
-    };
+// 2. إذا كنا في وضع التعديل (editing) فقط، نقوم بحقن الـ id بعد تحويله لرقم
+if (editing) {
+  dbData.id = Number(editing.id);
+}
 
     const savingToast = toast.loading('Saving changes to Supabase...');
 

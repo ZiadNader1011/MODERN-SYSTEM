@@ -154,7 +154,7 @@ export default function ShippingAgentDetails() {
 
       // 🌐 المزامنة المباشرة مع سيرفر الباك إند عبر الـ API الموحد لملفات السجلات
       // يرجى تغيير الرابط التابع للـ Record Controller الخاص بك إذا لزم الأمر
-      const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+      const baseUrl = import.meta.env.VITE_API_URL || 'https://modern-system-flame.vercel.app';
       const url = editing ? `${baseUrl}/${editing.id}` : baseUrl;
       const method = editing ? 'PUT' : 'POST';
 
@@ -211,7 +211,7 @@ export default function ShippingAgentDetails() {
   const handleDelete = useCallback(async () => {
     if (!deleting) return;
     try {
-      const response = await fetch(`http://localhost:5000/api/shipping-agent-records/${deleting.id}`, {
+      const response = await fetch(`https://modern-system-flame.vercel.app/api/shipping-agent-records/${deleting.id}`, {
         method: 'DELETE'
       });
 

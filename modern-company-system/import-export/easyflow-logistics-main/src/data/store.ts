@@ -14,7 +14,7 @@ export function generateId() {
 // ============================================================================
 
 // إذا كنت تستخدم Vite، سيقرأ الرابط من ملف الـ .env وفي حال عدم وجوده سيتوجه محلياً لـ localhost
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || (import.meta.env.DEV ? "http://localhost:5000/api" : "/api");
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "https://modern-system-flame.vercel.app/api";
 const api: AxiosInstance = axios.create({
   baseURL: BACKEND_URL,
   timeout: 15000,
