@@ -107,11 +107,10 @@ const handleAddExcelRow = async () => {
     const parsedJobId = filterJobId !== 'all' ? parseInt(filterJobId, 10) : null;
     const numericJobId = (parsedJobId && !isNaN(parsedJobId)) ? parsedJobId : null;
 
-    // 1. تجهيز الـ Payload بالـ camelCase المظبوط تماماً والآمن للـ Filter
+    // 1. تجهيز الـ Payload للسيرفر
     const newTxPayload = {
       supplierId: numericSupplierId, 
       jobId: numericJobId,           
-      relatedId: numericJobId ? String(numericJobId) : 'none', // ✅ إضافة هامة جداً عشان الفلتر يقرأ السطر فوراً
       type: 'raw_material', 
       amount: 1, 
       currency: filterCurrency !== 'all' ? filterCurrency : 'USD', 
@@ -129,17 +128,21 @@ const handleAddExcelRow = async () => {
       if (response.status === 201 || response.status === 200) {
         toast.success("Row added successfully");
         
-        // 2. تحديث الـ State في الـ Frontend فوراً بالكائن الجديد القادم من السيرفر
         if (response.data) {
-          // دمج الـ relatedId الافتراضي مع بيانات السيرفر لضمان تخطي الفلترة في نفس اللحظة
+          // 2. دمج الحقول بالصيغتين لضمان تخطي الفلترة الصارمة في الـ useMemo فوراً
           const addedTx = {
             ...response.data,
-            relatedId: response.data.relatedId || response.data.jobId || 'none'
+            supplierId: numericSupplierId,
+            entity_id: numericSupplierId, // لدعم شرط الفلترة tEntityId
+            jobId: numericJobId,
+            related_id: numericJobId,     // لدعم شرط الفلترة tRelatedId
+            relatedId: numericJobId ? String(numericJobId) : 'none'
           };
+          
           setTransactions(prev => [...prev, addedTx]);
         }
         
-        // 3. إعادة جلب البيانات للتأكيد الكامل وتطابق البيانات مع الـ Database
+        // 3. إعادة جلب البيانات من السيرفر للتأكيد
         await fetchTxs();
       }
     } catch (error) {
@@ -324,19 +327,18 @@ setTransactions(prev => {
 
     const numericRecordJobId = newRecordJobId && newRecordJobId !== 'none' ? parseInt(newRecordJobId, 10) : null;
 
-    // ✅ التعديل هنا: إرسال الحقول بالأسماء المتوافقة مع السيرفر وقاعدة البيانات
     const newTxPayload = {
-      supplierId: numericSupplierId,   // تم التعديل من entity_id إلى supplierId
-      jobId: numericRecordJobId,       // تم التعديل من related_id إلى jobId
+      supplierId: numericSupplierId,   
+      jobId: numericRecordJobId,       
       type: 'outgoing', 
       amount: Number(newRecordAmount),
       currency: newRecordCurrency,
       date: newRecordDate, 
       description: newRecordDesc || 'Payment Given',
-      blNumber: '-',                   // تحويل الحقل إلى CamelCase أيضاً احتياطاً
-      weightInTons: 0,                 // تحويل الحقل إلى CamelCase أيضاً احتياطاً
-      pricePerTon: 0,                  // تحويل الحقل إلى CamelCase أيضاً احتياطاً
-      otherCost: 0                     // تحويل الحقل إلى CamelCase أيضاً احتياطاً
+      blNumber: '-',                   
+      weightInTons: 0,                 
+      pricePerTon: 0,                  
+      otherCost: 0                     
     };
 
     try {
@@ -344,10 +346,25 @@ setTransactions(prev => {
       if (response.status === 201 || response.status === 200) {
         setIsAddRecordOpen(false);
         toast.success("Payment record added successfully");
+        
+        // ✅ التعديل الجوهري هنا: دمج الحقول ليتعرف عليها الـ useMemo فوراً ويظهر السطر دون الحاجة لـ Refresh
+        if (response.data) {
+          const addedRecord = {
+            ...response.data,
+            supplierId: numericSupplierId,
+            entity_id: numericSupplierId, // لتخطي شرط الـ tEntityId في الفلترة
+            jobId: numericRecordJobId,
+            related_id: numericRecordJobId, // لتخطي شرط الـ tRelatedId في الفلترة
+            relatedId: numericRecordJobId ? String(numericRecordJobId) : 'none'
+          };
+          setTransactions(prev => [...prev, addedRecord]);
+        }
+
         setNewRecordAmount('');
         setNewRecordDesc('');
         setNewRecordJobId('none');
-        await fetchTxs(); // تحديث الجدول فوراً بعد الإضافة الإيجابية
+        
+        await fetchTxs(); // لتأكيد البيانات المتزامنة مع السيرفر
       }
     } catch (error) {
       toast.error("Failed to save record to backend");
