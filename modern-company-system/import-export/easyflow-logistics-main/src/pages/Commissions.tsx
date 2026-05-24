@@ -27,8 +27,8 @@ export default function Commissions() {
   const [commissions, setCommissions] = useState<Commission[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // 1️⃣ جلب البيانات مباشرة من الـ Supabase لمنع الـ 404 والـ RLS Block
- const fetchCommissions = async () => {
+  // 1️⃣ جلب البيانات مطابقة تماماً لأسماء أعمدة الـ Supabase Schema الخاصة بك
+  const fetchCommissions = async () => {
     try {
       setLoading(true);
       
@@ -42,13 +42,13 @@ export default function Commissions() {
       const formattedData: Commission[] = (data || []).map((row: any) => ({
         id: row.id,
         date: row.date,
-        clientName: row.clientName || row.client_name || '',
-        trader: row.trader,
-        qualityRepresentative: row.qualityRepresentative || row.quality_representative || '',
-        product: row.product,
-        numberOfContainers: row.numberOfContainers !== undefined ? row.numberOfContainers : row.number_of_containers,
-        totalQuantityTon: row.totalQuantityTon !== undefined ? row.totalQuantityTon : row.total_quantity_ton,
-        commissionPerTon: row.commissionPerTon !== undefined ? row.commissionPerTon : row.commission_per_ton,
+        clientName: row.clientName || '',
+        trader: row.trader || '',
+        qualityRepresentative: row.qualityRepresentative || '',
+        product: row.product || '',
+        numberOfContainers: row.numberOfContainers || 0,
+        totalQuantityTon: row.totalQuantityTon || 0,
+        commissionPerTon: row.commissionPerTon || 0,
         currency: row.currency || 'USD',
         attachments: row.attachments || []
       }));
@@ -194,7 +194,7 @@ export default function Commissions() {
     }
   };
 
-  // 2️⃣ الحفظ المباشر في Supabase مع تحويل أسماء الأعمدة بصيغة الـ Snake Case المعتمدة للـ Database
+  // 2️⃣ الحفظ المطابق تماماً للـ Schema الحالية بدون إرسال أي حقول snake_case زائدة
   const handleSave = async () => {
     if (!form.clientName || !form.date) {
       toast.error('Please fill in all required fields');
@@ -202,25 +202,16 @@ export default function Commissions() {
     }
 
     const savingToast = toast.loading('Saving data to Cloud...');
-    const totalQty = Number(form.totalQuantityTon) || 0;
-    const commPerTon = Number(form.commissionPerTon) || 0;
-
-    // لتفادي خطأ الكاش، سنرسل الحقول بالصيغتين (الـ snake_case والـ CamelCase) 
-    // وقاعدة البيانات ستأخذ ما يطابق مخططها تلقائياً بدون مشاكل
+    
     const dbData: any = {
-      clientName: form.clientName,
-      client_name: form.clientName,
       date: form.date,
-      trader: form.trader,
-      qualityRepresentative: form.qualityRepresentative,
-      quality_representative: form.qualityRepresentative,
-      product: form.product,
+      clientName: form.clientName,
+      trader: form.trader || null,
+      product: form.product || null,
+      qualityRepresentative: form.qualityRepresentative || null,
       numberOfContainers: Number(form.numberOfContainers) || 0,
-      number_of_containers: Number(form.numberOfContainers) || 0,
-      totalQuantityTon: totalQty,
-      total_quantity_ton: totalQty,
-      commissionPerTon: commPerTon,
-      commission_per_ton: commPerTon,
+      totalQuantityTon: Number(form.totalQuantityTon) || 0,
+      commissionPerTon: Number(form.commissionPerTon) || 0,
       currency: form.currency,
       attachments: form.attachments 
     };
@@ -250,7 +241,7 @@ export default function Commissions() {
     }
   };
 
-  // 3️⃣ الحذف المباشر عبر تطبيق سوبابيز
+  // 3️⃣ الحذف المباشر
   const handleDelete = async () => {
     if (!deleting) return;
     const deletingToast = toast.loading('Removing record from cloud...');
