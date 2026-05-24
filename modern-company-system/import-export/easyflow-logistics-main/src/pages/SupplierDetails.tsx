@@ -17,6 +17,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { DatePicker } from '@/components/DatePicker';
+import axios from '@/api/axios';
 
 function EditableCell({ value, type = 'text', onSave, className = '', placeholder = '' }: { value: string | number | undefined, type?: string, onSave: (val: string | number) => void, className?: string, placeholder?: string }) {
   const [val, setVal] = useState(value !== undefined && value !== null ? value : '');
@@ -120,100 +121,95 @@ export default function SupplierDetails() {
   const [newRecordCurrency, setNewRecordCurrency] = useState('USD');
   const [newRecordDate, setNewRecordDate] = useState(new Date().toISOString().split('T')[0]);
 
-const handleAddExcelRow = () => {
-    // تحويل الـ id القادم من الرابط إلى رقم لأن الـ Prisma ينتظر Int لقاعدة البيانات
-    const numericSupplierId = id ? parseInt(id, 10) : null;
+const handleAddExcelRow = async () => {
+  const numericSupplierId = id ? parseInt(id, 10) : null;
 
-    if (!numericSupplierId || isNaN(numericSupplierId)) {
-      toast.error("Invalid Supplier ID");
-      return;
-    }
+  if (!numericSupplierId || isNaN(numericSupplierId)) {
+    toast.error("Invalid Supplier ID");
+    return;
+  }
 
-    // نقوم بتعريف الكائن كـ any مؤقتاً لتخطي حماية الـ TypeScript إذا لم تكن قد حدثت الـ Interface في الـ store
-    const newTx: any = {
-      id: generateId(), 
-      relatedId: id, // نتركها string لتطابق شروط الفلترة القديمة بالفرونت إند
-      entityId: id,  // للتوافق مع السطور اليدوية القديمة
-
-      // الحقول الرقمية الصريحة المطلوبة للـ Prisma Schema الجديدة في السيرفر:
-      supplierId: numericSupplierId, 
-      clientId: null,
-      jobId: null,
-
-      // تأكد من الحقول الأساسية لئلا يرفضها السيرفر بـ 400 (تجنب الـ null في الحقول الإلزامية)
-      type: 'raw_material', 
-      amount: 0,
-      currency: filterCurrency !== 'all' ? filterCurrency : 'USD', 
-      date: new Date().toISOString(), 
-      description: 'New Raw Material Entry', 
-      blNumber: '-', 
-      weightInTons: 0,
-      pricePerTon: 0,
-      otherCost: 0,
-      createdAt: new Date().toISOString()
-    };
-
-    // إذا كان هناك فلتر نشط لـ Job معين، نربطه رقمياً ونصياً لتفادي الـ 400
-    if (filterJobId !== 'all') {
-      newTx.relatedId = filterJobId;
-      newTx.jobId = parseInt(filterJobId, 10) || null;
-    }
-
-    const updated = [...transactions, newTx];
-    saveTransactions(updated);
-    setTransactions(updated);
+  const newTxPayload = {
+    supplierId: numericSupplierId,
+    type: 'raw_material', 
+    amount: 0,
+    currency: filterCurrency !== 'all' ? filterCurrency : 'USD', 
+    date: new Date().toISOString(), 
+    description: 'New Raw Material Entry', 
+    blNumber: '-', 
+    weightInTons: 0,
+    pricePerTon: 0,
+    otherCost: 0,
+    jobId: filterJobId !== 'all' ? parseInt(filterJobId, 10) : null 
   };
 
-  const handleTxUpdate = (txId: string, field: keyof Transaction, value: any) => {
-    const numericSupplierId = id ? parseInt(id, 10) : null;
-    let updatedTx: any = null;
+  try {
+    // 1. إرسال البيانات للباك آند
+    const response = await axios.post('/api/transactions', newTxPayload);
+    const savedTxFromBackend = response.data; // هنا الباك آند سيرجع الكائن مع الـ id الجديد
 
-    const updated = transactions.map(t => {
-      if (t.id === txId) {
-        // نضمن الحفاظ على حقول المعرفات الرقمية أثناء تعديل أي خلية لضمان عدم حدوث خطأ 400
-        const newT = { 
-          ...t, 
-          [field]: value,
-          supplierId: (t as any).supplierId || numericSupplierId,
-          jobId: (t as any).jobId || (t.relatedId && t.relatedId !== id ? parseInt(t.relatedId, 10) : null)
-        };
+    // 2. تحديث الـ State بالعنصر الحقيقي القادم من السيرفر
+    setTransactions(prev => [...prev, savedTxFromBackend]);
+    toast.success("Row added successfully");
+  } catch (error) {
+    toast.error("Failed to save to backend");
+  }
+};
 
-        if (field === 'weightInTons' || field === 'pricePerTon') {
-          newT.amount = (Number(newT.weightInTons) || 0) * (Number(newT.pricePerTon) || 0);
-        }
-        updatedTx = newT;
-        return newT;
+const handleTxUpdate = async (txId: string | number, field: keyof Transaction, value: any) => {
+  const numericSupplierId = id ? parseInt(id, 10) : null;
+  
+  const previousTransactions = [...transactions];
+
+  let targetTx: any = null;
+  const updated = transactions.map(t => {
+    // استخدم == بدلاً من === إذا كنت غير متأكد من تطابق النوع (string مقابل number) أو حوله لرقم
+    if (String(t.id) === String(txId)) {
+      const newT = { 
+        ...t, 
+        [field]: value,
+        supplierId: (t as any).supplierId || numericSupplierId,
+        jobId: (t as any).jobId || (t.relatedId && t.relatedId !== id ? parseInt(t.relatedId, 10) : null)
+      };
+
+      if (field === 'weightInTons' ||  field === 'pricePerTon') {
+        newT.amount = (Number(newT.weightInTons) || 0) * (Number(newT.pricePerTon) || 0);
       }
-      return t;
+      targetTx = newT;
+      return newT;
+    }
+    return t;
+  });
+  setTransactions(updated);
+
+  try {
+    const response = await axios.put(`/api/transactions/${txId}`, {
+      [field]: value,
+      amount: targetTx.amount 
     });
     
-    // Check if job linkage changed
-    if (field === 'relatedId' && value !== id && value !== 'none') {
-      const job = jobs.find(j => j.id === value);
-      if (job && job.supplierId !== id) {
-        const updatedJobs = jobs.map(j => j.id === value ? { ...j, supplierId: id } : j);
-        saveJobs(updatedJobs);
-        setJobs(updatedJobs);
-        toast.success('Job linked to this supplier.');
-      }
-    }
-    if (field === 'relatedId' && value === 'none') {
-      if (updatedTx) {
-        updatedTx.relatedId = id || '';
-        updatedTx.jobId = null;
-      }
-    }
+    setTransactions(prev => prev.map(t => String(t.id) === String(txId) ? response.data : t));
 
-    saveTransactions(updated);
-    setTransactions(updated);
-  };
+  } catch (error) {
+    toast.error("Failed to update on server");
+    setTransactions(previousTransactions);
+  }
+}; 
 
-  const handleDeleteTx = (txId: string) => {
-    const txToDelete = transactions.find(t => t.id === txId);
-    const updated = transactions.filter(t => t.id !== txId);
-    saveTransactions(updated);
-    setTransactions(updated);
-  };
+const handleDeleteTx = async (txId: string | number) => {
+  const previousTransactions = [...transactions];
+  const updated = transactions.filter(t => String(t.id) !== String(txId));
+  
+  setTransactions(updated);
+
+  try {
+    await axios.delete(`/api/transactions/${txId}`);
+    toast.success("Row deleted successfully");
+  } catch (error) {
+    toast.error("Failed to delete from server");
+    setTransactions(previousTransactions);
+  }
+};
 
   const supplier = suppliers.find(s => s.id === id);
 
@@ -313,25 +309,54 @@ const supplierTransactions = useMemo(() => {
     );
   }
 
-  const handleAddRecord = () => {
-    const newTx: Transaction = {
-      id: generateId(),
-      relatedId: newRecordJobId || id || '',
-      entityId: id,
-      type: 'outgoing',
-      amount: Number(newRecordAmount),
-      currency: newRecordCurrency,
-      date: newRecordDate,
-      description: newRecordDesc,
-      weightInTons: 0,
-      pricePerTon: 0,
-      blNumber: '',
-      createdAt: new Date().toISOString()
-    };
-    saveTransactions([...transactions, newTx]);
-    setTransactions([...transactions, newTx]);
-    setIsAddRecordOpen(false);
+ const handleAddRecord = async () => {
+  const numericSupplierId = id ? parseInt(id, 10) : null;
+  const numericJobId = newRecordJobId && newRecordJobId !== 'none' ? parseInt(newRecordJobId, 10) : null;
+
+  if (!numericSupplierId || isNaN(numericSupplierId)) {
+    toast.error("Invalid Supplier ID");
+    return;
+  }
+
+  if (!newRecordAmount || isNaN(Number(newRecordAmount))) {
+    toast.error("Please enter a valid amount");
+    return;
+  }
+
+  // 1. تجهيز البيانات المرسلة للباك آند (متوافقة مع PostgreSQL)
+  const newTxPayload = {
+    supplierId: numericSupplierId,
+    jobId: numericJobId, // سيكون رقم أو null إذا كانت عملية عامة بدون مشروع
+    type: 'outgoing', // نوع العملية دفع للمورد
+    amount: Number(newRecordAmount),
+    currency: newRecordCurrency,
+    date: new Date(newRecordDate).toISOString(), 
+    description: newRecordDesc || 'Payment Given',
+    blNumber: '-',
+    weightInTons: 0,
+    pricePerTon: 0,
+    otherCost: 0
   };
+
+  try {
+    // 2. إرسال البيانات للباك آند
+    const response = await axios.post('/api/transactions', newTxPayload);
+    const savedTxFromBackend = response.data; // استلام الكائن بالـ ID الرقمي الجديد من السيرفر
+
+    // 3. تحديث الـ State بالبيانات الحقيقية وإغلاق النافذة
+    setTransactions(prev => [...prev, savedTxFromBackend]);
+    setIsAddRecordOpen(false);
+    toast.success("Payment record added successfully");
+
+    // 4. إعادة تهيئة الحقول للاستخدام القادم
+    setNewRecordAmount('');
+    setNewRecordDesc('');
+    setNewRecordJobId('');
+  } catch (error) {
+    console.error("Error saving record to PostgreSQL:", error);
+    toast.error("Failed to save record to backend");
+  }
+};
 
   const printRow = (tx: Transaction) => {
     const jobName = tx.relatedId && tx.relatedId !== 'none' && tx.relatedId !== id ? jobs.find(j => j.id === tx.relatedId)?.title || 'General' : 'General';

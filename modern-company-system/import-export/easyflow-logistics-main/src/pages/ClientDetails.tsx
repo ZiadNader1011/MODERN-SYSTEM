@@ -1,9 +1,9 @@
-import { useMemo, useState, useEffect, useRef } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import { useParams as useRouterParams, useNavigate as useRouterNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
-import { formatDate, formatCurrency, formatBalanceObj, Job, Transaction } from '@/data/store'; 
+import { formatDate, formatBalanceObj, Job, Transaction } from '@/data/store'; 
 import { Button } from '@/components/ui/button';
 import { ArrowLeft, Printer, Plus, Trash2, Loader2 } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -26,51 +26,17 @@ interface Product {
 
 function EditableCell({ value, type = 'text', onSave, className = '', placeholder = '' }: { value: string | number | undefined, type?: string, onSave: (val: string | number) => void, className?: string, placeholder?: string }) {
   const [val, setVal] = useState(value !== undefined && value !== null ? value : '');
-  const valRef = useRef(val);
-  const onSaveRef = useRef(onSave);
-  const propValRef = useRef(value);
-
-  useEffect(() => { valRef.current = val; }, [val]);
-  useEffect(() => { onSaveRef.current = onSave; }, [onSave]);
-  useEffect(() => { propValRef.current = value; }, [value]);
 
   useEffect(() => {
-    if (String(value) !== String(valRef.current)) {
-      setVal(value !== undefined && value !== null ? value : '');
-    }
+    setVal(value !== undefined && value !== null ? value : '');
   }, [value]);
-
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      let finalVal = val;
-      if (type === 'number') {
-        finalVal = finalVal === '' ? 0 : Number(finalVal);
-      }
-      if (finalVal !== value && val !== '') {
-        onSave(finalVal);
-      }
-    }, 800);
-    return () => clearTimeout(timer);
-  }, [val, type, value, onSave]);
-
-  useEffect(() => {
-    return () => {
-      let finalVal = valRef.current;
-      if (type === 'number') {
-        finalVal = finalVal === '' ? 0 : Number(finalVal);
-      }
-      if (finalVal !== propValRef.current && valRef.current !== '') {
-        onSaveRef.current(finalVal);
-      }
-    };
-  }, [type]);
 
   const handleBlur = () => {
     let finalVal = val;
     if (type === 'number') {
       finalVal = finalVal === '' ? 0 : Number(finalVal);
     }
-    if (finalVal !== value) {
+    if (String(finalVal) !== String(value)) {
       onSave(finalVal);
     }
   };
@@ -101,11 +67,11 @@ export default function ClientDetails() {
   const { t } = useTranslation();
   
   const [invoicePrintOpen, setInvoicePrintOpen] = useState(false);
-  const [selectedTxForPrint, setSelectedTxForPrint] = useState<Transaction | null>(null);
+  const [selectedTxForPrint, setSelectedTxForPrint] = useState<any | null>(null);
 
   const [client, setClient] = useState<Client | null>(null);
   const [jobs, setJobs] = useState<Job[]>([]);
-  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [transactions, setTransactions] = useState<any[]>([]); 
   const [allProducts, setAllProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
@@ -120,23 +86,20 @@ export default function ClientDetails() {
         setLoading(true);
         
         const [clientRes, jobsRes, txsRes, productsRes] = await Promise.all([
-          supabase.from('clients').select('*').eq('id', id).maybeSingle(),
-          supabase.from('jobs').select('*'),
-          supabase.from('transactions').select('*'),
-          supabase.from('products').select('id, name')
+          supabase.from('Client').select('*').eq('id', id).maybeSingle(),
+          supabase.from('Job').select('*').eq('clientId', id), 
+          supabase.from('Transaction').select('*').eq('entity_id', id), 
+          supabase.from('Product').select('id, name')
         ]);
 
         if (clientRes.error) throw clientRes.error;
-        
-        if (clientRes.data) {
-          setClient(clientRes.data);
-        } else {
-          setClient(null);
-        }
-        
-        if (jobsRes.data) setJobs(jobsRes.data);
-        if (txsRes.data) setTransactions(txsRes.data);
-        if (productsRes.data) setAllProducts(productsRes.data);
+        if (jobsRes.error) throw jobsRes.error;
+        if (txsRes.error) throw txsRes.error;
+
+        setClient(clientRes.data || null);
+        setJobs(jobsRes.data || []);
+        setTransactions(txsRes.data || []);
+        setAllProducts(productsRes.data || []);
 
       } catch (error: any) {
         console.error('Error fetching ledger data:', error);
@@ -151,7 +114,6 @@ export default function ClientDetails() {
   const handleAddExcelRow = async () => {
     if (!id) return;
     
-    // تأمين الـ payload ليتوافق مع قاعدة البيانات كـ snake_case دون إرسال تعارضات
     const newTx = {
       entity_id: id,      
       type: 'raw_material',
@@ -161,43 +123,37 @@ export default function ClientDetails() {
       description: '',
       weight_in_tons: 0,   
       price_per_ton: 0,    
-      bl_number: ''
+      bl_number: '',
+      variety: '',
+      caliber: '',
+      grade: '',
+      incoterm: ''
     };
 
     const { data, error } = await supabase
-      .from('transactions')
+      .from('Transaction')
       .insert([newTx])
       .select()
       .maybeSingle();
 
     if (error) {
       console.error("Supabase Insert Error: ", error);
-      toast.error(`حذف أو إضافة السطر فشلت: ${error.message}`);
+      toast.error(`إضافة السطر فشلت: ${error.message}`);
     } else if (data) {
       setTransactions(prev => [...prev, data]);
       toast.success('تم إضافة السطر بنجاح في قاعدة البيانات.');
     }
   };
 
-  const handleTxUpdate = async (txId: string, field: keyof Transaction | string, value: any) => {
-    let dbField = field;
-    if (field === 'weightInTons') dbField = 'weight_in_tons';
-    if (field === 'pricePerTon') dbField = 'price_per_ton';
-    if (field === 'blNumber') dbField = 'bl_number';
-    if (field === 'relatedId') dbField = 'related_id';
-    if (field === 'entityId') dbField = 'entity_id';
-
-    let updatedTxLocal: any = null;
+  const handleTxUpdate = async (txId: string, dbField: string, value: any) => {
     const updatedLocally = transactions.map(t => {
       if (t.id === txId) {
-        const newT = { ...t, [field]: value };
-        // حساب الحسبة التلقائية فقط في حالة تعديل الوزن أو السعر
-        if (['weightInTons', 'pricePerTon', 'weight_in_tons', 'price_per_ton'].includes(field as string)) {
-          const w = Number(newT.weightInTons || (newT as any).weight_in_tons) || 0;
-          const p = Number(newT.pricePerTon || (newT as any).price_per_ton) || 0;
+        const newT = { ...t, [dbField]: value };
+        if (['weight_in_tons', 'price_per_ton'].includes(dbField)) {
+          const w = Number(newT.weight_in_tons) || 0;
+          const p = Number(newT.price_per_ton) || 0;
           newT.amount = w * p;
         }
-        updatedTxLocal = newT;
         return newT;
       }
       return t;
@@ -205,28 +161,29 @@ export default function ClientDetails() {
     setTransactions(updatedLocally);
 
     const updatePayload: Record<string, any> = { [dbField]: value };
+    const targetTx = updatedLocally.find(t => t.id === txId);
     
-    if (['weightInTons', 'pricePerTon', 'weight_in_tons', 'price_per_ton'].includes(field as string)) {
-      const w = Number(updatedTxLocal?.weightInTons || updatedTxLocal?.weight_in_tons) || 0;
-      const p = Number(updatedTxLocal?.pricePerTon || updatedTxLocal?.price_per_ton) || 0;
+    if (['weight_in_tons', 'price_per_ton'].includes(dbField)) {
+      const w = Number(targetTx?.weight_in_tons) || 0;
+      const p = Number(targetTx?.price_per_ton) || 0;
       updatePayload.amount = w * p;
     }
 
     const { error } = await supabase
-      .from('transactions')
+      .from('Transaction')
       .update(updatePayload)
       .eq('id', txId);
 
     if (error) {
       console.error('Supabase Update Error: ', error);
       toast.error(`فشل المزامنة: ${error.message}`);
-      setRefreshTrigger(p => p + 1); // إعادة جلب البيانات الأصلية في حالة الفشل تلافياً لعدم التطابق
+      setRefreshTrigger(p => p + 1); 
     }
   };
 
   const handleDeleteTx = async (txId: string) => {
     const { error } = await supabase
-      .from('transactions')
+      .from('Transaction')
       .delete()
       .eq('id', txId);
 
@@ -239,30 +196,35 @@ export default function ClientDetails() {
   };
 
   const clientJobs = useMemo(() => {
-    return jobs.filter(j => j.clientId === id).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-  }, [jobs, id]);
+    return [...jobs].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  }, [jobs]);
 
   const clientTransactions = useMemo(() => {
-    const clientJobIds = jobs.filter(j => j.clientId === id).map(j => j.id);
-    
-    let manualTxs = transactions.filter(t => {
-      const entityId = t.entityId || (t as any).entity_id;
-      const relatedId = t.relatedId || (t as any).related_id;
-      if (entityId) return entityId === id;
-      if (relatedId === id) return true;
-      if (relatedId && clientJobIds.includes(relatedId)) {
-        return t.type === 'incoming';
-      }
-      return false;
-    });
+    // 🔥 تعديل جوهري: الـ Mapping اليدوي الآن يحافظ على الأسماء موحدة بصيغة camelCase للـ UI لضمان عدم حدوث تضارب
+    let manualTxs = transactions.map(t => ({
+      id: t.id,
+      entityId: t.entity_id,
+      type: t.type,
+      amount: t.amount,
+      currency: t.currency,
+      date: t.date,
+      description: t.description,
+      relatedId: t.related_id,
+      blNumber: t.bl_number,
+      weightInTons: t.weight_in_tons,
+      pricePerTon: t.price_per_ton,
+      variety: t.variety,
+      caliber: t.caliber,
+      grade: t.grade,
+      incoterm: t.incoterm,
+      isAuto: false
+    }));
 
     const autoTxs: any[] = [];
-    const clientJobsList = jobs.filter(j => j.clientId === id);
-
-    clientJobsList.forEach(job => {
-      const hasValidProducts = job.products && job.products.some(p => (Number(p.quantity) || 0) > 0 && (Number(p.unitPrice) || 0) > 0);
+    jobs.forEach(job => {
+      const hasValidProducts = job.products && job.products.some((p: any) => (Number(p.quantity) || 0) > 0 && (Number(p.unitPrice) || 0) > 0);
       if (hasValidProducts) {
-        job.products.forEach((p, idx) => {
+        job.products.forEach((p: any, idx: number) => {
           if ((Number(p.quantity) || 0) > 0 && (Number(p.unitPrice) || 0) > 0) {
             const c = p.currency || job.currency;
             const val = Number(p.quantity) * Number(p.unitPrice);
@@ -279,6 +241,10 @@ export default function ClientDetails() {
               weightInTons: p.quantity,
               pricePerTon: p.unitPrice,
               blNumber: job.blNumber || '',
+              variety: p.variety || '',
+              caliber: p.caliber || '',
+              grade: p.grade || '',
+              incoterm: job.incoterm || '',
               isAuto: true
             });
           }
@@ -297,6 +263,10 @@ export default function ClientDetails() {
           weightInTons: 0,
           pricePerTon: 0,
           blNumber: job.blNumber || '',
+          variety: '',
+          caliber: '',
+          grade: '',
+          incoterm: job.incoterm || '',
           isAuto: true
         });
       }
@@ -305,7 +275,7 @@ export default function ClientDetails() {
     let allTxs = [...manualTxs, ...autoTxs];
 
     if (filterJobId !== 'all') {
-      allTxs = allTxs.filter(t => (t.relatedId || (t as any).related_id) === filterJobId);
+      allTxs = allTxs.filter(t => t.relatedId === filterJobId);
     }
 
     if (filterCurrency !== 'all') {
@@ -313,7 +283,7 @@ export default function ClientDetails() {
     }
 
     return allTxs.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-  }, [transactions, jobs, id, filterJobId, filterCurrency, allProducts]);
+  }, [transactions, jobs, filterJobId, filterCurrency, allProducts]);
 
   if (loading) {
     return (
@@ -334,7 +304,7 @@ export default function ClientDetails() {
     );
   }
 
-  const printRow = (tx: Transaction) => {
+  const printRow = (tx: any) => {
     setSelectedTxForPrint(tx);
     setInvoicePrintOpen(true);
   };
@@ -451,92 +421,61 @@ export default function ClientDetails() {
                 <tr><td colSpan={14} className="px-4 py-8 text-center text-muted-foreground">No ledger rows found. Click "Add Row" to start.</td></tr>
               ) : (
                 clientTransactions.map((tx) => {
-                  const txRelatedId = tx.relatedId || (tx as any).related_id;
-                  const txBlNumber = tx.blNumber || (tx as any).bl_number;
-                  const txWeightInTons = tx.weightInTons !== undefined ? tx.weightInTons : (tx as any).weight_in_tons;
-                  const txPricePerTon = tx.pricePerTon !== undefined ? tx.pricePerTon : (tx as any).price_per_ton;
-
                   return (
                     <tr key={tx.id} className="hover:bg-muted/30 transition-colors group">
                       <td className="px-4 py-2">
-                        {(tx as any).isAuto ? <span className="text-xs text-muted-foreground">{formatDate(tx.date)}</span> : <DatePicker value={tx.date.split('T')[0]} onChange={(v) => handleTxUpdate(tx.id, 'date', v)} className="w-28 h-8 text-xs bg-transparent border-transparent hover:border-input focus:border-input p-1" />}
+                        {tx.isAuto ? <span className="text-xs text-muted-foreground">{formatDate(tx.date)}</span> : <DatePicker value={tx.date ? tx.date.split('T')[0] : ''} onChange={(v) => handleTxUpdate(tx.id, 'date', v)} className="w-28 h-8 text-xs bg-transparent border-transparent hover:border-input focus:border-input p-1" />}
                       </td>
                       <td className="px-4 py-2">
                         {(() => {
-                          const linkedJob = jobs.find(j => j.id === txRelatedId);
+                          const linkedJob = jobs.find(j => j.id === tx.relatedId);
                           const incotermText = linkedJob?.incoterm && linkedJob.incoterm !== 'none' ? `[${linkedJob.incoterm}]` : '';
-                          if ((tx as any).isAuto) {
+                          if (tx.isAuto) {
                             return <span className="text-xs text-muted-foreground whitespace-nowrap overflow-hidden text-ellipsis block w-40">{linkedJob?.title || 'Job'} {incotermText}</span>;
                           }
                           return (
-                            <Select value={txRelatedId === id ? 'none' : (txRelatedId || 'none')} onValueChange={(v) => handleTxUpdate(tx.id, 'relatedId', v === 'none' ? null : v)}>
+                            <Select value={tx.relatedId || 'none'} onValueChange={(v) => handleTxUpdate(tx.id, 'related_id', v === 'none' ? null : v)}>
                               <SelectTrigger className="h-8 text-xs border-transparent hover:border-input bg-transparent"><SelectValue placeholder="Select Job" /></SelectTrigger>
                               <SelectContent>
                                 <SelectItem value="none">General (No Job)</SelectItem>
-                                {jobs.filter(j => j.clientId === id).map(j => <SelectItem key={j.id} value={j.id}>{formatDate(j.createdAt)} - {j.title} {j.incoterm && j.incoterm !== 'none' ? `[${j.incoterm}]` : ''}</SelectItem>)}
+                                {jobs.map(j => <SelectItem key={j.id} value={j.id}>{formatDate(j.createdAt)} - {j.title} {j.incoterm && j.incoterm !== 'none' ? `[${j.incoterm}]` : ''}</SelectItem>)}
                               </SelectContent>
                             </Select>
                           );
                         })()}
                       </td>
                       <td className="px-4 py-2">
-                        {(tx as any).isAuto ? <span className="text-xs text-primary font-medium">{tx.description}</span> : <EditableCell type="text" value={tx.description} onSave={(v) => handleTxUpdate(tx.id, 'description', v)} placeholder="Product..." className="w-full text-xs bg-transparent" />}
+                        {tx.isAuto ? <span className="text-xs text-primary font-medium">{tx.description}</span> : <EditableCell type="text" value={tx.description} onSave={(v) => handleTxUpdate(tx.id, 'description', v)} placeholder="Product..." className="w-full text-xs bg-transparent" />}
+                      </td>
+                      <td className="px-4 py-2">
+                        {tx.isAuto ? <span className="text-xs text-muted-foreground">{tx.variety}</span> : <EditableCell type="text" value={tx.variety} onSave={(v) => handleTxUpdate(tx.id, 'variety', v)} placeholder="Variety" className="w-16 text-xs bg-transparent" />}
+                      </td>
+                      <td className="px-4 py-2">
+                        {tx.isAuto ? <span className="text-xs text-muted-foreground">{tx.caliber}</span> : <EditableCell type="text" value={tx.caliber} onSave={(v) => handleTxUpdate(tx.id, 'caliber', v)} placeholder="Caliber" className="w-16 text-xs bg-transparent" />}
+                      </td>
+                      <td className="px-4 py-2">
+                        {tx.isAuto ? <span className="text-xs text-muted-foreground">{tx.grade}</span> : <EditableCell type="text" value={tx.grade} onSave={(v) => handleTxUpdate(tx.id, 'grade', v)} placeholder="Grade" className="w-16 text-xs bg-transparent" />}
                       </td>
                       <td className="px-4 py-2">
                         {(() => {
-                          const linkedJob = jobs.find(j => j.id === txRelatedId);
-                          const p = linkedJob?.products?.[0];
-                          const val = tx.variety || p?.variety || '';
-                          if ((tx as any).isAuto) return <span className="text-xs text-muted-foreground">{val}</span>;
-                          return <EditableCell type="text" value={tx.variety || ''} onSave={(v) => handleTxUpdate(tx.id, 'variety', v)} placeholder="Variety" className="w-16 text-xs bg-transparent" />;
-                        })()}
-                      </td>
-                      <td className="px-4 py-2">
-                        {(() => {
-                          const linkedJob = jobs.find(j => j.id === txRelatedId);
-                          const p = linkedJob?.products?.[0];
-                          const val = tx.caliber || p?.caliber || '';
-                          if ((tx as any).isAuto) return <span className="text-xs text-muted-foreground">{val}</span>;
-                          return <EditableCell type="text" value={tx.caliber || ''} onSave={(v) => handleTxUpdate(tx.id, 'caliber', v)} placeholder="Caliber" className="w-16 text-xs bg-transparent" />;
-                        })()}
-                      </td>
-                      <td className="px-4 py-2">
-                        {(() => {
-                          const linkedJob = jobs.find(j => j.id === txRelatedId);
-                          const p = linkedJob?.products?.[0];
-                          const val = tx.grade || p?.grade || '';
-                          if ((tx as any).isAuto) return <span className="text-xs text-muted-foreground">{val}</span>;
-                          return <EditableCell type="text" value={tx.grade || ''} onSave={(v) => handleTxUpdate(tx.id, 'grade', v)} placeholder="Grade" className="w-16 text-xs bg-transparent" />;
-                        })()}
-                      </td>
-                      <td className="px-4 py-2">
-                        {(() => {
-                          const linkedJob = jobs.find(j => j.id === txRelatedId);
+                          const linkedJob = jobs.find(j => j.id === tx.relatedId);
                           const qtyText = linkedJob?.numberOfContainers ? `(${linkedJob.numberOfContainers} FCL)` : '';
-                          const blVal = txBlNumber || linkedJob?.blNumber || '-';
-                          if ((tx as any).isAuto) {
-                            return <span className="text-xs text-muted-foreground">{blVal} {qtyText}</span>;
+                          if (tx.isAuto) {
+                            return <span className="text-xs text-muted-foreground">{tx.blNumber} {qtyText}</span>;
                           }
                           return (
                             <div className="flex flex-col gap-1 w-full">
-                              <EditableCell type="text" value={txBlNumber || ''} onSave={(v) => handleTxUpdate(tx.id, 'blNumber', v)} placeholder="Container..." className="w-full text-xs bg-transparent" />
+                              <EditableCell type="text" value={tx.blNumber} onSave={(v) => handleTxUpdate(tx.id, 'bl_number', v)} placeholder="Container..." className="w-full text-xs bg-transparent" />
                               {qtyText && <span className="text-[10px] text-muted-foreground">{qtyText}</span>}
                             </div>
                           );
                         })()}
                       </td>
                       <td className="px-4 py-2">
-                        {(() => {
-                          const linkedJob = jobs.find(j => j.id === txRelatedId);
-                          const term = tx.incoterm || linkedJob?.incoterm || '';
-                          if ((tx as any).isAuto) {
-                            return <span className="text-xs text-muted-foreground font-medium">{term}</span>;
-                          }
-                          return <EditableCell type="text" value={tx.incoterm || ''} onSave={(v) => handleTxUpdate(tx.id, 'incoterm', v)} placeholder="CFR, FOB..." className="w-20 text-xs bg-transparent" />;
-                        })()}
+                        {tx.isAuto ? <span className="text-xs text-muted-foreground font-medium">{tx.incoterm}</span> : <EditableCell type="text" value={tx.incoterm} onSave={(v) => handleTxUpdate(tx.id, 'incoterm', v)} placeholder="CFR, FOB..." className="w-20 text-xs bg-transparent" />}
                       </td>
                       <td className="px-4 py-2">
-                        {(tx as any).isAuto ? (
+                        {tx.isAuto ? (
                           <span className="text-xs font-medium text-muted-foreground">{tx.currency}</span>
                         ) : (
                           <Select value={tx.currency} onValueChange={(v) => handleTxUpdate(tx.id, 'currency', v)}>
@@ -550,13 +489,13 @@ export default function ClientDetails() {
                         )}
                       </td>
                       <td className="px-4 py-2 text-right">
-                        {(tx as any).isAuto ? <span className="text-xs text-muted-foreground">{txWeightInTons || 0}</span> : <EditableCell type="number" value={txWeightInTons || 0} onSave={(v) => handleTxUpdate(tx.id, 'weightInTons', v)} className="w-20 text-xs bg-transparent text-right" />}
+                        {tx.isAuto ? <span className="text-xs text-muted-foreground">{tx.weightInTons || 0}</span> : <EditableCell type="number" value={tx.weightInTons || 0} onSave={(v) => handleTxUpdate(tx.id, 'weight_in_tons', v)} className="w-20 text-xs bg-transparent text-right" />}
                       </td>
                       <td className="px-4 py-2 text-right">
-                        {(tx as any).isAuto ? <span className="text-xs text-muted-foreground">{txPricePerTon || 0}</span> : <EditableCell type="number" value={txPricePerTon || 0} onSave={(v) => handleTxUpdate(tx.id, 'pricePerTon', v)} className="w-20 text-xs bg-transparent text-right" />}
+                        {tx.isAuto ? <span className="text-xs text-muted-foreground">{tx.pricePerTon || 0}</span> : <EditableCell type="number" value={tx.pricePerTon || 0} onSave={(v) => handleTxUpdate(tx.id, 'price_per_ton', v)} className="w-20 text-xs bg-transparent text-right" />}
                       </td>
                       <td className="px-4 py-2 text-right text-red-600 font-medium">
-                        {(tx as any).isAuto ? (
+                        {tx.isAuto ? (
                           <span>{tx.amount}</span>
                         ) : tx.type !== 'incoming' ? (
                           <EditableCell type="number" value={tx.amount} onSave={(v) => handleTxUpdate(tx.id, 'amount', v)} className="w-24 text-xs font-medium bg-transparent text-right text-red-600" />
@@ -576,7 +515,7 @@ export default function ClientDetails() {
                           <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-primary" onClick={() => printRow(tx)}>
                             <Printer className="h-4 w-4" />
                           </Button>
-                          {!(tx as any).isAuto && (
+                          {!tx.isAuto && (
                             <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" onClick={() => handleDeleteTx(tx.id)}>
                               <Trash2 className="h-4 w-4" />
                             </Button>
@@ -619,7 +558,7 @@ export default function ClientDetails() {
         onOpenChange={setInvoicePrintOpen} 
         transaction={selectedTxForPrint} 
         client={client}
-        job={selectedTxForPrint ? jobs.find(j => j.id === (selectedTxForPrint.relatedId || (selectedTxForPrint as any).related_id)) : null}
+        job={selectedTxForPrint ? jobs.find(j => j.id === selectedTxForPrint.relatedId) : null}
       />
     </div>
   );
