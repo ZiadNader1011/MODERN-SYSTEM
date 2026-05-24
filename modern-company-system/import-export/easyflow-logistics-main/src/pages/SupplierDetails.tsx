@@ -15,7 +15,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { DatePicker } from '@/components/DatePicker';
-import axios from '@/api/axios';
+import axios from 'axios';
+
 
 interface EditableCellProps {
   value: string | number | undefined;
@@ -108,19 +109,23 @@ const handleAddExcelRow = async () => {
     const numericJobId = (parsedJobId && !isNaN(parsedJobId)) ? parsedJobId : null;
 
     // 1. تجهيز الـ Payload للسيرفر
-    const newTxPayload = {
-      supplierId: numericSupplierId, 
-      jobId: numericJobId,           
-      type: 'raw_material', 
-      amount: 1, 
-      currency: filterCurrency !== 'all' ? filterCurrency : 'USD', 
-      date: new Date().toISOString().split('T')[0], 
-      description: 'New Raw Material Entry', 
-      blNumber: '-', 
-      weightInTons: 0, 
-      pricePerTon: 0,  
-      otherCost: 0
-    };
+ const newTxPayload = {
+  supplierId: numericSupplierId,
+  entity_id: numericSupplierId, // أضف دي
+
+  jobId: numericJobId,
+  related_id: numericJobId, // أضف دي
+
+  type: 'raw_material',
+  amount: 1,
+  currency: filterCurrency !== 'all' ? filterCurrency : 'USD',
+  date: new Date().toISOString().split('T')[0],
+  description: 'New Raw Material Entry',
+  blNumber: '-',
+  weightInTons: 0,
+  pricePerTon: 0,
+  otherCost: 0
+};
 
     try {
       const response = await axios.post('/api/transactions', newTxPayload);
@@ -343,6 +348,7 @@ setTransactions(prev => {
 
     try {
       const response = await axios.post('/api/transactions', newTxPayload);
+      console.log(response.data);
       if (response.status === 201 || response.status === 200) {
         setIsAddRecordOpen(false);
         toast.success("Payment record added successfully");
