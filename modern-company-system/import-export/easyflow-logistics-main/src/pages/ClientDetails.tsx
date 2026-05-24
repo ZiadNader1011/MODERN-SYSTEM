@@ -11,7 +11,6 @@ import { DatePicker } from '@/components/DatePicker';
 import { ClientInvoicePrintForm } from '@/components/ClientInvoicePrintForm';
 import { supabase } from '@/utils/supabaseClient';
 
-// تعريف الـ Interfaces اللازمة لضمان خلو عملية الـ Build من أخطاء الـ types
 interface Client {
   id: string;
   name: string;
@@ -50,7 +49,7 @@ function EditableCell({ value, type = 'text', onSave, className = '', placeholde
       if (finalVal !== value && val !== '') {
         onSave(finalVal);
       }
-    }, 800); // زيادة الـ Debounce قليلاً لتناسب سرعة استجابة السيرفر عبر الـ API
+    }, 800);
     return () => clearTimeout(timer);
   }, [val, type, value, onSave]);
 
@@ -104,7 +103,6 @@ export default function ClientDetails() {
   const [invoicePrintOpen, setInvoicePrintOpen] = useState(false);
   const [selectedTxForPrint, setSelectedTxForPrint] = useState<Transaction | null>(null);
 
-  // تعريف حالات البيانات المستجلبة من Supabase
   const [client, setClient] = useState<Client | null>(null);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
@@ -115,16 +113,14 @@ export default function ClientDetails() {
   const [filterJobId, setFilterJobId] = useState<string>('all');
   const [filterCurrency, setFilterCurrency] = useState<string>('all');
 
-  // جلب البيانات من الجداول عند تحميل الصفحة أو تحديث الـ trigger
   useEffect(() => {
     async function fetchClientData() {
       if (!id) return;
       try {
         setLoading(true);
         
-        // جلب العميل، العمليات، المعاملات، والمنتجات بالتوازي لضمان سرعة التحميل الشديدة
         const [clientRes, jobsRes, txsRes, productsRes] = await Promise.all([
-          supabase.from('clients').select('*').eq('id', id).single(),
+          supabase.from('clients').select('*').eq('id', id).maybeSingle(),
           supabase.from('jobs').select('*'),
           supabase.from('transactions').select('*'),
           supabase.from('products').select('id, name')
@@ -132,14 +128,19 @@ export default function ClientDetails() {
 
         if (clientRes.error) throw clientRes.error;
         
-        setClient(clientRes.data);
+        if (clientRes.data) {
+          setClient(clientRes.data);
+        } else {
+          setClient(null);
+        }
+        
         if (jobsRes.data) setJobs(jobsRes.data);
         if (txsRes.data) setTransactions(txsRes.data);
         if (productsRes.data) setAllProducts(productsRes.data);
 
       } catch (error: any) {
         console.error('Error fetching ledger data:', error);
-        toast.error('Failed to load ledger data from database.');
+        toast.error(`Database Error: ${error.message || 'Failed to load data'}`);
       } finally {
         setLoading(false);
       }
@@ -147,49 +148,53 @@ export default function ClientDetails() {
     fetchClientData();
   }, [id, refreshTrigger]);
 
-  // إضافة سطر جديد فارغ (Excel Row) مباشرة إلى Supabase وحفظه بشكل حي
   const handleAddExcelRow = async () => {
     if (!id) return;
     
+    // تأمين الـ payload ليتوافق مع قاعدة البيانات كـ snake_case دون إرسال تعارضات
     const newTx = {
-      related_id: id, // تأكدي من تطابق أسماء الأعمدة في الـ DB لديكِ (snake_case أو camelClient)
-      entity_id: id,
+      entity_id: id,      
       type: 'raw_material',
       amount: 0,
       currency: 'USD',
       date: new Date().toISOString().slice(0, 10),
       description: '',
-      weight_in_tons: 0,
-      price_per_ton: 0,
-      bl_number: '',
-      created_at: new Date().toISOString()
+      weight_in_tons: 0,   
+      price_per_ton: 0,    
+      bl_number: ''
     };
 
     const { data, error } = await supabase
       .from('transactions')
       .insert([newTx])
       .select()
-      .single();
+      .maybeSingle();
 
     if (error) {
-      console.error(error);
-      toast.error('Could not add database row.');
+      console.error("Supabase Insert Error: ", error);
+      toast.error(`حذف أو إضافة السطر فشلت: ${error.message}`);
     } else if (data) {
       setTransactions(prev => [...prev, data]);
-      toast.success('Row added directly to system.');
+      toast.success('تم إضافة السطر بنجاح في قاعدة البيانات.');
     }
   };
 
-  // تحديث خلية محددة داخل السطر وتأكيدها في السيرفر بشكل فوري
   const handleTxUpdate = async (txId: string, field: keyof Transaction | string, value: any) => {
-    // تحديث محلي سريع لإشعار واجهة المستخدم فوراً (Optimistic UI)
+    let dbField = field;
+    if (field === 'weightInTons') dbField = 'weight_in_tons';
+    if (field === 'pricePerTon') dbField = 'price_per_ton';
+    if (field === 'blNumber') dbField = 'bl_number';
+    if (field === 'relatedId') dbField = 'related_id';
+    if (field === 'entityId') dbField = 'entity_id';
+
     let updatedTxLocal: any = null;
     const updatedLocally = transactions.map(t => {
       if (t.id === txId) {
         const newT = { ...t, [field]: value };
-        if (field === 'weightInTons' || field === 'pricePerTon' || field === 'weight_in_tons' || field === 'price_per_ton') {
-          const w = Number(newT.weightInTons || newT.weightInTons) || 0;
-          const p = Number(newT.pricePerTon || newT.pricePerTon) || 0;
+        // حساب الحسبة التلقائية فقط في حالة تعديل الوزن أو السعر
+        if (['weightInTons', 'pricePerTon', 'weight_in_tons', 'price_per_ton'].includes(field as string)) {
+          const w = Number(newT.weightInTons || (newT as any).weight_in_tons) || 0;
+          const p = Number(newT.pricePerTon || (newT as any).price_per_ton) || 0;
           newT.amount = w * p;
         }
         updatedTxLocal = newT;
@@ -199,9 +204,9 @@ export default function ClientDetails() {
     });
     setTransactions(updatedLocally);
 
-    // تجهيز كائن التحديث لقاعدة البيانات (تعديل الحقول لتطابق الـ Mapping إذا كانت الـ DB تستخدم snake_case)
-    const updatePayload: Record<string, any> = { [field]: value };
-    if (field === 'weightInTons' || field === 'pricePerTon' || field === 'weight_in_tons' || field === 'price_per_ton') {
+    const updatePayload: Record<string, any> = { [dbField]: value };
+    
+    if (['weightInTons', 'pricePerTon', 'weight_in_tons', 'price_per_ton'].includes(field as string)) {
       const w = Number(updatedTxLocal?.weightInTons || updatedTxLocal?.weight_in_tons) || 0;
       const p = Number(updatedTxLocal?.pricePerTon || updatedTxLocal?.price_per_ton) || 0;
       updatePayload.amount = w * p;
@@ -213,48 +218,12 @@ export default function ClientDetails() {
       .eq('id', txId);
 
     if (error) {
-      console.error(error);
-      toast.error('Database sync failed.');
-      return;
-    }
-
-    // التحقق من حالة ربط العمليات بالعملاء بشكل حي
-    if ((field === 'relatedId' || field === 'related_id') && value !== id && value !== 'none') {
-      const job = jobs.find(j => j.id === value);
-      if (job && job.clientId !== id) {
-        const { error: jobErr } = await supabase
-          .from('jobs')
-          .update({ clientId: id })
-          .eq('id', value);
-
-        if (!jobErr) {
-          setJobs(prev => prev.map(j => j.id === value ? { ...j, clientId: id! } : j));
-          toast.success('Job linked to this client globally.');
-        }
-      }
-    }
-
-    // مزامنة التحديثات على المنتجات المرتبطة بالعملية تلقائياً
-    if (updatedTxLocal && ['variety', 'caliber', 'grade'].includes(field as string)) {
-      const targetJobId = updatedTxLocal.relatedId || updatedTxLocal.related_id;
-      if (targetJobId && targetJobId !== 'none' && targetJobId !== id) {
-        const job = jobs.find(j => j.id === targetJobId);
-        if (job) {
-          const newProds = [...(job.products || [])];
-          if (newProds.length > 0) {
-            newProds[0] = { ...newProds[0], [field]: value };
-          } else {
-            newProds.push({ productId: '', quantity: 0, unitPrice: 0, packages: 0, [field]: value });
-          }
-          
-          await supabase.from('jobs').update({ products: newProds }).eq('id', job.id);
-          setJobs(prev => prev.map(j => j.id === job.id ? { ...j, products: newProds } : j));
-        }
-      }
+      console.error('Supabase Update Error: ', error);
+      toast.error(`فشل المزامنة: ${error.message}`);
+      setRefreshTrigger(p => p + 1); // إعادة جلب البيانات الأصلية في حالة الفشل تلافياً لعدم التطابق
     }
   };
 
-  // حذف السطر نهائياً من الـ PostgreSQL
   const handleDeleteTx = async (txId: string) => {
     const { error } = await supabase
       .from('transactions')
@@ -262,14 +231,13 @@ export default function ClientDetails() {
       .eq('id', txId);
 
     if (error) {
-      toast.error('Could not delete from database.');
+      toast.error(`تعذر الحذف من قاعدة البيانات: ${error.message}`);
     } else {
       setTransactions(prev => prev.filter(t => t.id !== txId));
-      toast.success('Row deleted successfully.');
+      toast.success('تم حذف السطر بنجاح.');
     }
   };
 
-  // معالجة تصفية العمليات والمعاملات التلقائية المربوطة بالـ Client الحالي
   const clientJobs = useMemo(() => {
     return jobs.filter(j => j.clientId === id).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   }, [jobs, id]);
@@ -277,7 +245,6 @@ export default function ClientDetails() {
   const clientTransactions = useMemo(() => {
     const clientJobIds = jobs.filter(j => j.clientId === id).map(j => j.id);
     
-    // الحقول تدعم التسميتين الاحتياطيتين (camelCase و snake_case القادمة من الـ Postgres)
     let manualTxs = transactions.filter(t => {
       const entityId = t.entityId || (t as any).entity_id;
       const relatedId = t.relatedId || (t as any).related_id;
@@ -360,7 +327,8 @@ export default function ClientDetails() {
   if (!client) {
     return (
       <div className="p-8 text-center">
-        <h2 className="text-2xl font-bold">Client data not found in Supabase</h2>
+        <h2 className="text-2xl font-bold text-destructive">Client ID Not Found In Database</h2>
+        <p className="text-muted-foreground mt-2">The record may have been deleted or the route parameter is incorrect.</p>
         <Button onClick={() => navigate('/clients')} className="mt-4">Back to Clients</Button>
       </div>
     );
@@ -501,7 +469,7 @@ export default function ClientDetails() {
                             return <span className="text-xs text-muted-foreground whitespace-nowrap overflow-hidden text-ellipsis block w-40">{linkedJob?.title || 'Job'} {incotermText}</span>;
                           }
                           return (
-                            <Select value={txRelatedId === id ? 'none' : (txRelatedId || 'none')} onValueChange={(v) => handleTxUpdate(tx.id, 'relatedId', v)}>
+                            <Select value={txRelatedId === id ? 'none' : (txRelatedId || 'none')} onValueChange={(v) => handleTxUpdate(tx.id, 'relatedId', v === 'none' ? null : v)}>
                               <SelectTrigger className="h-8 text-xs border-transparent hover:border-input bg-transparent"><SelectValue placeholder="Select Job" /></SelectTrigger>
                               <SelectContent>
                                 <SelectItem value="none">General (No Job)</SelectItem>
@@ -587,31 +555,33 @@ export default function ClientDetails() {
                       <td className="px-4 py-2 text-right">
                         {(tx as any).isAuto ? <span className="text-xs text-muted-foreground">{txPricePerTon || 0}</span> : <EditableCell type="number" value={txPricePerTon || 0} onSave={(v) => handleTxUpdate(tx.id, 'pricePerTon', v)} className="w-20 text-xs bg-transparent text-right" />}
                       </td>
-                      <td className="px-4 py-2 text-right">
+                      <td className="px-4 py-2 text-right text-red-600 font-medium">
                         {(tx as any).isAuto ? (
-                          <span className="text-xs font-medium text-red-600">{tx.amount}</span>
+                          <span>{tx.amount}</span>
                         ) : tx.type !== 'incoming' ? (
                           <EditableCell type="number" value={tx.amount} onSave={(v) => handleTxUpdate(tx.id, 'amount', v)} className="w-24 text-xs font-medium bg-transparent text-right text-red-600" />
                         ) : (
                           <Button variant="ghost" size="sm" className="h-8 text-xs text-muted-foreground hover:text-red-600" onClick={() => handleTxUpdate(tx.id, 'type', 'raw_material')}>Set Charge</Button>
                         )}
                       </td>
-                      <td className="px-4 py-2 text-right flex justify-end">
+                      <td className="px-4 py-2 text-right text-green-600 font-bold">
                         {tx.type === 'incoming' ? (
                           <EditableCell type="number" value={tx.amount} onSave={(v) => handleTxUpdate(tx.id, 'amount', v)} className="w-28 text-base font-bold bg-transparent text-right text-green-600" />
                         ) : (
                           <Button variant="ghost" size="sm" className="h-8 text-xs text-muted-foreground hover:text-green-600" onClick={() => handleTxUpdate(tx.id, 'type', 'incoming')}>Set Payment</Button>
                         )}
                       </td>
-                      <td className="px-4 py-2 text-center flex items-center justify-center gap-1 no-print">
-                        <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-primary" onClick={() => printRow(tx)}>
-                          <Printer className="h-4 w-4" />
-                        </Button>
-                        {!(tx as any).isAuto && (
-                          <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" onClick={() => handleDeleteTx(tx.id)}>
-                            <Trash2 className="h-4 w-4" />
+                      <td className="px-4 py-2 text-center no-print">
+                        <div className="flex items-center justify-center gap-1">
+                          <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-primary" onClick={() => printRow(tx)}>
+                            <Printer className="h-4 w-4" />
                           </Button>
-                        )}
+                          {!(tx as any).isAuto && (
+                            <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" onClick={() => handleDeleteTx(tx.id)}>
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   );
@@ -621,19 +591,19 @@ export default function ClientDetails() {
             {clientTransactions.length > 0 && (
               <tfoot className="bg-muted font-bold text-sm">
                 <tr>
-                  <td colSpan={7} className="px-4 py-4 text-right uppercase">Operations Value:</td>
+                  <td colSpan={11} className="px-4 py-4 text-right uppercase">Operations Value:</td>
                   <td colSpan={3} className="px-4 py-4 text-center text-lg text-primary whitespace-nowrap border-l">
                     {formatBalanceObj(totalOperationsObj)}
                   </td>
                 </tr>
                 <tr className="border-t">
-                  <td colSpan={7} className="px-4 py-4 text-right uppercase">Total Payment Received:</td>
+                  <td colSpan={11} className="px-4 py-4 text-right uppercase">Total Payment Received:</td>
                   <td colSpan={3} className="px-4 py-4 text-center text-lg text-success whitespace-nowrap border-l">
                     {formatBalanceObj(totalPaymentsObj)}
                   </td>
                 </tr>
                 <tr className="border-t">
-                  <td colSpan={7} className="px-4 py-4 text-right uppercase">Total Balance Owed by Client:</td>
+                  <td colSpan={11} className="px-4 py-4 text-right uppercase">Total Balance Owed by Client:</td>
                   <td colSpan={3} className="px-4 py-4 text-center text-lg text-destructive whitespace-nowrap border-l">
                     {formatBalanceObj(totalBalanceObj)}
                   </td>

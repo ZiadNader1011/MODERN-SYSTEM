@@ -110,44 +110,44 @@ useEffect(() => {
   };
 
  const openEdit = (j: Job) => {
-    setEditing(j);
-    setForm({
-      title: j.title || '', 
-      supplierId: j.supplierId || 'none', 
-      clientId: j.clientId || 'none', 
-      containerId: j.containerId || 'none',
-      currency: j.currency || 'USD', 
-      paymentDate: j.paymentDate || '', 
-      status: j.status || 'active', 
-      operationType: j.operationType || activeTab,
-      invoiceNumber: j.invoiceNumber || '', 
-      blNumber: j.blNumber || '', 
-      exportCertificate: j.exportCertificate || '', 
-      shippingAgent: j.shippingAgent || '', 
-      incoterm: j.incoterm || 'none', 
-      departurePort: j.departurePort || '', 
-      arrivalPort: j.arrivalPort || '', 
-      transitTo: j.transitTo || '', 
-      packingListUrl: j.packingListUrl || '',
-      isSold: j.isSold || false, 
-      discountPercentage: j.discountPercentage !== undefined ? j.discountPercentage : 0, 
-      supplierDiscountPercentage: j.supplierDiscountPercentage !== undefined ? j.supplierDiscountPercentage : 0, 
-      rawMaterialPricePerTon: j.rawMaterialPricePerTon !== undefined ? j.rawMaterialPricePerTon : 0, 
-      rawMaterialWeight: j.rawMaterialWeight !== undefined ? j.rawMaterialWeight : 0, 
-      rawMaterialCost: j.rawMaterialCost !== undefined ? j.rawMaterialCost : 0, 
-      pettyCash: j.pettyCash !== undefined ? j.pettyCash : 0, 
-      otherCostReason: j.otherCostReason || '',
-      numberOfContainers: j.numberOfContainers || (j.containerIds && j.containerIds.length > 0 ? j.containerIds.length : ''),
-      containerIds: j.containerIds && j.containerIds.length > 0 ? j.containerIds : (j.containerId && j.containerId !== 'none' ? [j.containerId] : []),
-      notes: j.notes || '', 
-      products: j.products ? [...j.products] : [], 
-      attachments: j.attachments ? [...j.attachments] : [],
-      numberOfReps: j.numberOfReps || '',
-      repNames: j.repNames ? [...j.repNames] : [],
-      createdAt: (j.createdAt || new Date().toISOString()).split('T')[0]
-    });
-    setEditOpen(true);
-  };
+  setEditing(j);
+  setForm({
+    title: j.title || '', 
+    supplierId: j.supplierId || 'none', 
+    clientId: j.clientId || 'none', 
+    containerId: j.containerId || 'none',
+    currency: j.currency || 'USD', 
+    paymentDate: j.paymentDate || '', 
+    status: j.status || 'active', 
+    operationType: j.operationType || activeTab,
+    invoiceNumber: j.invoiceNumber || '', 
+    blNumber: j.blNumber || '', 
+    exportCertificate: j.exportCertificate || '', 
+    shippingAgent: j.shippingAgent || '', 
+    incoterm: j.incoterm || 'none', 
+    departurePort: j.departurePort || '', 
+    arrivalPort: j.arrivalPort || '', 
+    transitTo: j.transitTo || '', 
+    packingListUrl: j.packingListUrl || '',
+    isSold: j.isSold || false, 
+    discountPercentage: j.discountPercentage !== undefined ? j.discountPercentage : 0, 
+    supplierDiscountPercentage: j.supplierDiscountPercentage !== undefined ? j.supplierDiscountPercentage : 0, 
+    rawMaterialPricePerTon: j.rawMaterialPricePerTon !== undefined ? j.rawMaterialPricePerTon : 0, 
+    rawMaterialWeight: j.rawMaterialWeight !== undefined ? j.rawMaterialWeight : 0, 
+    rawMaterialCost: j.rawMaterialCost !== undefined ? j.rawMaterialCost : 0, 
+    pettyCash: j.pettyCash !== undefined ? j.pettyCash : 0, 
+    otherCostReason: j.otherCostReason || '',
+    numberOfContainers: j.numberOfContainers || (j.containerIds && j.containerIds.length > 0 ? j.containerIds.length : ''),
+    containerIds: j.containerIds && j.containerIds.length > 0 ? j.containerIds : (j.containerId && j.containerId !== 'none' ? [j.containerId] : []),
+    notes: j.notes || '', 
+    products: j.products ? j.products.map(p => ({ ...p })) : [], // كنسخة عميقة
+    attachments: j.attachments ? j.attachments.map(a => ({ ...a })) : [],
+    numberOfReps: j.numberOfReps || '',
+    repNames: j.repNames ? [...j.repNames] : [],
+    createdAt: (j.createdAt || new Date().toISOString()).split('T')[0]
+  });
+  setEditOpen(true);
+};
 
   const addProductLine = () => {
     setForm(f => ({ ...f, products: [...f.products, { productId: '', quantity: 0, unitPrice: 0, packages: 0, numberOfPallets: 0, packageType: '', variety: '', caliber: '', grade: '' }] }));
@@ -222,73 +222,70 @@ useEffect(() => {
   const calcTotal = (prods: { quantity?: string | number; unitPrice?: string | number }[]) => prods.reduce((s, p) => s + (Number(p.quantity) || 0) * (Number(p.unitPrice) || 0), 0);
 
  const handleSave = () => {
-    if (!form.title.trim()) { toast.error('Please enter a job title.'); return; }
-    
-    const parsedProducts = (form.products || []).map(p => ({
-      ...p,
-      quantity: Number(p.quantity) || 0,
-      unitPrice: Number(p.unitPrice) || 0,
-      packages: p.packages ? Number(p.packages) : 0
-    }));
-    
-    const totalPrice = calcTotal(parsedProducts);
-    const calculatedRawMaterialCost = (Number(form.rawMaterialPricePerTon) || 0) * (Number(form.rawMaterialWeight) || 0);
+  if (!form.title.trim()) { toast.error('Please enter a job title.'); return; }
+  
+  const parsedProducts = (form.products || []).map(p => ({
+    ...p,
+    quantity: Number(p.quantity) || 0,
+    unitPrice: Number(p.unitPrice) || 0,
+    packages: p.packages ? Number(p.packages) : 0
+  }));
+  
+  const totalPrice = calcTotal(parsedProducts);
+  const calculatedRawMaterialCost = (Number(form.rawMaterialPricePerTon) || 0) * (Number(form.rawMaterialWeight) || 0);
 
-    const finalJobData: Job = {
-      ...form,
-      products: parsedProducts,
-      rawMaterialPricePerTon: Number(form.rawMaterialPricePerTon) || 0,
-      rawMaterialWeight: Number(form.rawMaterialWeight) || 0,
-      pettyCash: Number(form.pettyCash) || 0,
-      discountPercentage: Number(form.discountPercentage) || 0,
-      supplierDiscountPercentage: Number(form.supplierDiscountPercentage) || 0,
-      rawMaterialCost: calculatedRawMaterialCost,
-      id: editing ? editing.id : generateId(),
-      supplierId: form.supplierId === 'none' ? undefined : form.supplierId,
-      clientId: form.clientId === 'none' ? undefined : form.clientId,
-      containerId: form.containerId === 'none' ? undefined : form.containerId,
-      numberOfContainers: Number(form.numberOfContainers) || 0,
-      containerIds: form.containerIds && form.containerIds.length > 0 ? form.containerIds : (form.containerId && form.containerId !== 'none' ? [form.containerId] : []),
-      totalPrice,
-      numberOfReps: Number(form.numberOfReps) || 0,
-      repNames: form.numberOfReps && Number(form.numberOfReps) > 0 ? form.repNames.slice(0, Number(form.numberOfReps)) : form.repNames,
-      createdAt: form.createdAt ? new Date(form.createdAt + 'T12:00:00Z').toISOString() : new Date().toISOString()
-    };
+  const finalJobData: Job = {
+    ...form,
+    products: parsedProducts,
+    rawMaterialPricePerTon: Number(form.rawMaterialPricePerTon) || 0,
+    rawMaterialWeight: Number(form.rawMaterialWeight) || 0,
+    pettyCash: Number(form.pettyCash) || 0,
+    discountPercentage: Number(form.discountPercentage) || 0,
+    supplierDiscountPercentage: Number(form.supplierDiscountPercentage) || 0,
+    rawMaterialCost: calculatedRawMaterialCost,
+    id: editing ? editing.id : generateId(),
+    supplierId: form.supplierId === 'none' ? undefined : form.supplierId,
+    clientId: form.clientId === 'none' ? undefined : form.clientId,
+    containerId: form.containerId === 'none' ? undefined : form.containerId,
+    numberOfContainers: Number(form.numberOfContainers) || 0,
+    containerIds: form.containerIds && form.containerIds.length > 0 ? form.containerIds : (form.containerId && form.containerId !== 'none' ? [form.containerId] : []),
+    totalPrice,
+    numberOfReps: Number(form.numberOfReps) || 0,
+    repNames: form.numberOfReps && Number(form.numberOfReps) > 0 ? form.repNames.slice(0, Number(form.numberOfReps)) : form.repNames,
+    createdAt: form.createdAt ? new Date(form.createdAt + 'T12:00:00Z').toISOString() : new Date().toISOString()
+  };
 
-    let updated: Job[];
+  // استخدام Functional Update لضمان الحفاظ على بقية العناصر دون تصفيرها
+  setJobs(prevJobs => {
+    let updatedGrid: Job[];
     if (editing) {
-      updated = jobs.map(j => j.id === editing.id ? finalJobData : j);
-
-      // مزامنة حقول التواريخ مع الـ Transactions المرتبطة بالوظيفة لمنع تعارض السجلات
-      const oldDateOnly = editing.createdAt ? new Date(editing.createdAt).toISOString().split('T')[0] : '';
-      const newDateOnly = finalJobData.createdAt.split('T')[0];
-
-      if (oldDateOnly !== newDateOnly) {
-        const allTx = getTransactions();
-        let changedTx = false;
-        const updatedTx = allTx.map(t => {
-          if (t.relatedId === editing.id) {
-            changedTx = true;
-            return { ...t, date: newDateOnly };
-          }
-          return t;
-        });
-        if (changedTx) {
-          saveTransactions(updatedTx);
-        }
-      }
-
+      updatedGrid = prevJobs.map(j => j.id === editing.id ? finalJobData : j);
       toast.success(`"${form.title}" has been updated! ✨`);
     } else {
-      updated = [...jobs, finalJobData];
+      updatedGrid = [...prevJobs, finalJobData];
       toast.success(`"${form.title}" has been created! 🎉`);
     }
     
-    setJobs(updated);
-    saveJobs(updated);
-    setEditOpen(false);
-  };
+    // حفظ مباشر ومزامن للمصفوفة المحدثة كاملة للـ Store
+    saveJobs(updatedGrid);
+    return updatedGrid;
+  });
 
+  // مزامنة التواريخ مع المعاملات المالية (Transactions)
+  if (editing) {
+    const oldDateOnly = editing.createdAt ? new Date(editing.createdAt).toISOString().split('T')[0] : '';
+    const newDateOnly = finalJobData.createdAt.split('T')[0];
+
+    if (oldDateOnly !== newDateOnly) {
+      const allTx = getTransactions();
+      const updatedTx = allTx.map(t => t.relatedId === editing.id ? { ...t, date: newDateOnly } : t);
+      saveTransactions(updatedTx);
+    }
+  }
+
+  setEditOpen(false);
+  setEditing(null); // تفريغ حالة التعديل فوراً بعد النجاح
+};
   const handleDelete = useCallback(() => {
     if (!deleting) return;
     const updated = jobs.filter(j => j.id !== deleting.id);
