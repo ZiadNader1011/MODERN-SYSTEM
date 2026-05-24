@@ -120,7 +120,7 @@ export default function SupplierDetails() {
   const [newRecordCurrency, setNewRecordCurrency] = useState('USD');
   const [newRecordDate, setNewRecordDate] = useState(new Date().toISOString().split('T')[0]);
 
-  const handleAddExcelRow = async () => {
+const handleAddExcelRow = async () => {
     const numericSupplierId = id ? parseInt(id, 10) : null;
 
     if (!numericSupplierId || isNaN(numericSupplierId)) {
@@ -128,26 +128,29 @@ export default function SupplierDetails() {
       return;
     }
 
-    // 🔹 تعديل هنا: تم تحويل الحقول لتوافق الـ snake_case الخاص بقاعدة البيانات
+    // 💡 التعديل هنا: بنضمن إن التحويل لرقم نجح ومطلعش NaN
+    const parsedJobId = filterJobId !== 'all' ? parseInt(filterJobId, 10) : null;
+    const numericJobId = (parsedJobId && !isNaN(parsedJobId)) ? parsedJobId : null;
+
     const newTxPayload = {
       entity_id: numericSupplierId,
       type: 'raw_material', 
       amount: 0,
       currency: filterCurrency !== 'all' ? filterCurrency : 'USD', 
-      date: new Date().toISOString(), 
+      // 💡 تظبيط التاريخ عشان لو الباك-إند مستني تاريخ سادة YYYY-MM-DD
+      date: new Date().toISOString().split('T')[0], 
       description: 'New Raw Material Entry', 
       bl_number: '-', 
       weight_in_tons: 0,
       price_per_ton: 0,
       other_cost: 0,
-      related_id: filterJobId !== 'all' ? filterJobId : null 
+      related_id: numericJobId // 👈 بيبعت رقم أو null صريح
     };
 
     try {
       const response = await axios.post('/api/transactions', newTxPayload);
       const savedTxFromBackend = response.data; 
 
-      // رسم الحقل محلياً ليتوافق مع بقية الفلتر والكود القديم
       const normalizedTx = {
         ...savedTxFromBackend,
         id: savedTxFromBackend.id,
@@ -338,7 +341,7 @@ export default function SupplierDetails() {
     );
   }
 
-  const handleAddRecord = async () => {
+const handleAddRecord = async () => {
     const numericSupplierId = id ? parseInt(id, 10) : null;
 
     if (!numericSupplierId || isNaN(numericSupplierId)) {
@@ -351,14 +354,17 @@ export default function SupplierDetails() {
       return;
     }
 
-    // 🔹 تعديل هنا: توافق الـ Payload مع صيغة الـ Database حقل بحقل
+    // 💡 التعديل الجوهري هنا: تحويل الـ Job ID لرقم صريح في حقل السندات لتفادي الـ 400
+    const parsedRecordJobId = newRecordJobId && newRecordJobId !== 'none' ? parseInt(newRecordJobId, 10) : null;
+    const numericRecordJobId = (parsedRecordJobId && !isNaN(parsedRecordJobId)) ? parsedRecordJobId : null;
+
     const newTxPayload = {
       entity_id: numericSupplierId,
-      related_id: newRecordJobId && newRecordJobId !== 'none' ? newRecordJobId : null, 
+      related_id: numericRecordJobId, // 👈 بيبعت رقم أو null
       type: 'outgoing', 
       amount: Number(newRecordAmount),
       currency: newRecordCurrency,
-      date: new Date(newRecordDate).toISOString(), 
+      date: newRecordDate, // هو أصلاً مقصوص جاهز YYYY-MM-DD من الـ State
       description: newRecordDesc || 'Payment Given',
       bl_number: '-',
       weight_in_tons: 0,
