@@ -1,13 +1,15 @@
-import { useState, useMemo } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { useTranslation } from '../../node_modules/react-i18next';
-import { getJobs, getSuppliers, getClients, getProducts, getContainers, getTransactions, formatCurrency, formatDate } from '@/data/store';
+import { useTranslation } from 'react-i18next'; // تم تعديل المسار ليكون معياريًا ومتوافقًا مع Vercel
+
+import { formatCurrency, formatDate } from '@/data/store'; // أبقينا فقط على دوال التنسيق
 import { AccountStatement } from '@/components/AccountStatement';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { PageHeader } from '@/components/PageHeader';
 import { FileViewer } from '@/components/FileViewer';
-import { ArrowLeft, Briefcase, Users, Ship, Calendar, Wheat, DollarSign, FileText } from 'lucide-react';
+import { ArrowLeft, Briefcase, Users, Ship, Calendar, Wheat, DollarSign, FileText, Loader2 } from 'lucide-react';
+import { supabase } from '@/utils/supabaseClient';
 
 const statusColors: Record<string, string> = {
   active: 'bg-success/10 text-success border-success/20',
@@ -15,38 +17,152 @@ const statusColors: Record<string, string> = {
   cancelled: 'bg-destructive/10 text-destructive border-destructive/20',
 };
 
+// تعريف الواجهات (Interfaces) لضمان توافق الـ TypeScript وعدم حدوث مشاكل أثناء الـ Build في Vercel
+interface Product {
+  id: string;
+  name: string;
+}
+
+interface JobProduct {
+  productId: string;
+  quantity: number;
+  unitPrice: number;
+  currency?: string;
+  variety?: string;
+  caliber?: string;
+  grade?: string;
+  packages?: number;
+  packageType?: string;
+  numberOfPallets?: number;
+}
+
+interface Job {
+  id: string;
+  title: string;
+  operationType: string;
+  status: string;
+  createdAt: string;
+  supplierId?: string;
+  clientId?: string;
+  containerId?: string;
+  blNumber?: string;
+  packingListUrl?: string;
+  notes?: string;
+  numberOfReps?: number;
+  repNames?: string[];
+  totalPrice: number;
+  discountPercentage?: number;
+  rawMaterialCost?: number;
+  supplierDiscountPercentage?: number;
+  pettyCash?: number;
+  currency: string;
+  products: JobProduct[];
+}
+
 export default function JobDetails() {
-  const { id } = useParams();
+  const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { t } = useTranslation();
   
-  const jobs = useMemo(() => getJobs(), []);
-  const suppliers = useMemo(() => getSuppliers(), []);
-  const clients = useMemo(() => getClients(), []);
-  const products = useMemo(() => getProducts(), []);
-  const containers = useMemo(() => getContainers(), []);
+  // حالات إدارة البيانات والتحميل
+  const [job, setJob] = useState<Job | null>(null);
+  const [supplier, setSupplier] = useState<any>(null);
+  const [client, setClient] = useState<any>(null);
+  const [container, setContainer] = useState<any>(null);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [transactions, setTransactions] = useState<any[]>([]);
   
+  const [loading, setLoading] = useState(true);
   const [txTrigger, setTxTrigger] = useState(0);
   const [viewingFile, setViewingFile] = useState<string | null>(null);
-  const transactions = useMemo(() => getTransactions(), [txTrigger]);
 
-  const job = jobs.find(j => j.id === id);
+  // جلب البيانات الأساسية للعملية (Job) والمنتجات العامة
+  useEffect(() => {
+    async function fetchJobData() {
+      try {
+        setLoading(true);
+        
+        // 1. جلب بيانات العملية الأساسية
+        const { data: jobData, error: jobError } = await supabase
+          .from('jobs') // اسم الجدول في Supabase
+          .select('*')
+          .eq('id', id)
+          .single();
 
-  if (!job) {
-    return <div className="p-12 text-center text-muted-foreground">Operation not found. <Button variant="link" onClick={() => navigate('/jobs')}>Go back</Button></div>;
+        if (jobError || !jobData) {
+          console.error(jobError);
+          setJob(null);
+          setLoading(false);
+          return;
+        }
+
+        setJob(jobData);
+
+        // 2. جلب البيانات المرتبطة (العلاقات) بالتوازي لتسريع الأداء
+        const [supplierRes, clientRes, containerRes, productsRes] = await Promise.all([
+          jobData.supplierId ? supabase.from('suppliers').select('*').eq('id', jobData.supplierId).single() : Promise.resolve({ data: null }),
+          jobData.clientId ? supabase.from('clients').select('*').eq('id', jobData.clientId).single() : Promise.resolve({ data: null }),
+          jobData.containerId ? supabase.from('containers').select('*').eq('id', jobData.containerId).single() : Promise.resolve({ data: null }),
+          supabase.from('products').select('id, name')
+        ]);
+
+        if (supplierRes.data) setSupplier(supplierRes.data);
+        if (clientRes.data) setClient(clientRes.data);
+        if (containerRes.data) setContainer(containerRes.data);
+        if (productsRes.data) setProducts(productsRes.data);
+
+      } catch (err) {
+        console.error("Error fetching operational data:", err);
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    if (id) fetchJobData();
+  }, [id]);
+
+  // جلب المعاملات المالية وتحديثها عند إطلاق الـ trigger
+  useEffect(() => {
+    async function fetchTransactions() {
+      if (!id) return;
+      const { data, error } = await supabase
+        .from('transactions')
+        .select('*')
+        .eq('relatedId', id); // ربط المعاملات بـ id العملية الحالية
+      
+      if (!error && data) {
+        setTransactions(data);
+      }
+    }
+    fetchTransactions();
+  }, [id, txTrigger]);
+
+  // شاشة الانتظار أثناء جلب البيانات
+  if (loading) {
+    return (
+      <div className="p-24 flex flex-col items-center justify-center text-muted-foreground gap-2">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        <p>Loading operation data from database...</p>
+      </div>
+    );
   }
 
-  const supplier = suppliers.find(s => s.id === job.supplierId);
-  const client = clients.find(c => c.id === job.clientId);
-  const container = containers.find(c => c.id === job.containerId);
+  // إذا لم يتم العثور على العملية
+  if (!job) {
+    return (
+      <div className="p-12 text-center text-muted-foreground">
+        Operation not found or has been deleted.
+        <div className="mt-4">
+          <Button variant="link" onClick={() => navigate('/jobs')}>Go back</Button>
+        </div>
+      </div>
+    );
+  }
 
-  // Computed from Job base form
-  const baseDiscount = job.totalPrice * ((job.discountPercentage || 0) / 100);
-  const baseRawMatCost = (job.rawMaterialCost || 0);
+  // الحسابات الرياضية المعتمدة على البيانات القادمة من السيرفر
   const pettyCashCost = (job.pettyCash || 0);
 
-  // Transactions linked to this Job
-  const jobTxs = transactions.filter(t => t.relatedId === job.id);
+  const jobTxs = transactions;
   const sumByCurr = (filterFn: (t: any) => boolean, mapFn: (t: any) => number = t => t.amount) => {
     return jobTxs.filter(filterFn).reduce((acc, t) => {
       const c = t.currency || job.currency;
@@ -84,6 +200,7 @@ export default function JobDetails() {
   const baseOtherObj = { [job.currency]: pettyCashCost };
   const baseRawMatObj = { [job.currency]: netRawMatCost };
   const hasValidProducts = job.products && job.products.some(p => (Number(p.quantity) || 0) > 0 && (Number(p.unitPrice) || 0) > 0);
+  
   const jobProductsValuationObjGross = hasValidProducts 
     ? job.products.reduce((acc, p) => {
         const c = p.currency || job.currency;
@@ -232,7 +349,7 @@ export default function JobDetails() {
             </div>
           </div>
           
-          {job.products.length > 0 && (
+          {job.products && job.products.length > 0 && (
             <div className="bg-card border rounded-xl p-5 shadow-sm">
               <h3 className="font-semibold text-lg mb-4 flex items-center gap-2"><Wheat className="h-5 w-5 text-primary"/> Linked Products</h3>
               <div className="space-y-2">
@@ -252,7 +369,7 @@ export default function JobDetails() {
                       <span className="text-muted-foreground text-xs">
                         {jp.quantity} × {formatCurrency(jp.unitPrice, pCurr)} = {formatCurrency(jp.quantity * jp.unitPrice, pCurr)}
                         {jp.packages && ` | ${jp.packages} pkgs${jp.packageType ? ` (${jp.packageType})` : ''}`}
-                        {jp.numberOfPallets > 0 && ` | ${jp.numberOfPallets} pallets`}
+                        {jp.numberOfPallets && jp.numberOfPallets > 0 ? ` | ${jp.numberOfPallets} pallets` : ''}
                       </span>
                     </div>
                   );
