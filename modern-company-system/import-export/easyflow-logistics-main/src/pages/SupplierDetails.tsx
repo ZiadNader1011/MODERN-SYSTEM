@@ -3,8 +3,8 @@ import { useParams as useRouterParams, useNavigate as useRouterNavigate } from '
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import {
-  getSuppliers, getJobs, getTransactions, getContainers, getProducts,
-  formatDate, formatCurrency, formatBalanceObj, Job, saveJobs, generateId, saveTransactions, Transaction
+  getSuppliers, getJobs, getTransactions,
+  formatDate, formatCurrency, formatBalanceObj, Job, Transaction
 } from '@/data/store';
 import { Button } from '@/components/ui/button';
 import { ArrowLeft, Plus, Printer, Trash2 } from 'lucide-react';
@@ -47,18 +47,6 @@ function EditableCell({ value, type = 'text', onSave, className = '', placeholde
     return () => clearTimeout(timer);
   }, [val, type, value, onSave]);
 
-  useEffect(() => {
-    return () => {
-      let finalVal = valRef.current;
-      if (type === 'number') {
-        finalVal = finalVal === '' ? 0 : Number(finalVal);
-      }
-      if (finalVal !== propValRef.current && valRef.current !== '') {
-        onSaveRef.current(finalVal);
-      }
-    };
-  }, [type]);
-
   const handleBlur = () => {
     let finalVal = val;
     if (type === 'number') {
@@ -84,13 +72,13 @@ function EditableCell({ value, type = 'text', onSave, className = '', placeholde
       onBlur={handleBlur}
       onKeyDown={handleKeyDown}
       placeholder={placeholder}
-      className={`bg-transparent outline-none focus:ring-1 focus:ring-primary rounded px-1 py-0.5 transition-colors hover:bg-muted/50 border border-transparent hover:border-input focus:border-input ${className}`}
+      className={`bg-transparent outline-none focus:ring-1 focus:ring-primary rounded px-1 py-0.5 border border-transparent hover:border-input focus:border-input ${className}`}
     />
   );
 }
 
 export default function SupplierDetails() {
-  const { id } = useRouterParams(); // هذا دائماً عبارة عن String (مثلاً "3")
+  const { id } = useRouterParams(); 
   const navigate = useRouterNavigate();
   const { t } = useTranslation();
 
@@ -98,17 +86,18 @@ export default function SupplierDetails() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
 
+  // دالة موحدة لجلب البيانات من السيرفر
+  const fetchTxs = async () => {
+    try {
+      const res = await axios.get('/api/transactions');
+      setTransactions(res.data);
+    } catch (err) {
+      setTransactions(getTransactions());
+    }
+  };
+
   useEffect(() => {
     setJobs(getJobs());
-    // جلب المعاملات من السيرفر عند تحميل الصفحة لضمان المزامنة
-    const fetchTxs = async () => {
-      try {
-        const res = await axios.get('/api/transactions');
-        setTransactions(res.data);
-      } catch (err) {
-        setTransactions(getTransactions());
-      }
-    };
     fetchTxs();
   }, []);
 
@@ -135,36 +124,24 @@ export default function SupplierDetails() {
     const newTxPayload = {
       entity_id: numericSupplierId,
       type: 'raw_material', 
-      amount: 1, 
+      amount: 0, 
       currency: filterCurrency !== 'all' ? filterCurrency : 'USD', 
       date: new Date().toISOString().split('T')[0], 
       description: 'New Raw Material Entry', 
       bl_number: '-', 
-      weight_in_tons: 1, 
-      price_per_ton: 1,  
+      weight_in_tons: 0, 
+      price_per_ton: 0,  
       other_cost: 0,
       related_id: numericJobId 
     };
 
     try {
       const response = await axios.post('/api/transactions', newTxPayload);
-      const savedTxFromBackend = response.data; 
-
-      // 💡 الحل هنا: تحويل كافة المعرفات إلى نصوص أو أرقام موحدة تماثل الـ URL المتوقع
-      const normalizedTx = {
-        ...savedTxFromBackend,
-        id: String(savedTxFromBackend.id),
-        supplierId: String(savedTxFromBackend.entity_id),
-        entityId: String(savedTxFromBackend.entity_id),
-        relatedId: savedTxFromBackend.related_id ? String(savedTxFromBackend.related_id) : null,
-        blNumber: savedTxFromBackend.bl_number,
-        weightInTons: savedTxFromBackend.weight_in_tons,
-        pricePerTon: savedTxFromBackend.price_per_ton,
-        otherCost: savedTxFromBackend.other_cost
-      };
-
-      setTransactions(prev => [...prev, normalizedTx]);
-      toast.success("Row added successfully");
+      if (response.status === 201 || response.status === 200) {
+        toast.success("Row added successfully");
+        // إعادة جلب البيانات فوراً لضمان مزامنة المعرفات من السيرفر بشكل سليم
+        await fetchTxs();
+      }
     } catch (error) {
       toast.error("Failed to save to backend");
     }
@@ -245,7 +222,7 @@ export default function SupplierDetails() {
     const manualTxs = transactions.filter(t => {
       if (t.type === 'discount') return false;
       
-      // توحيد مقارنة الحقول كمقارنة نصوص String تفادياً لاختلاف السيرفر والفرونت
+      // تحويل إجباري لكافة المعرفات إلى نصوص لمطابقتها مع الـ URL الـ String بشكل سليم
       const tEntityId = String((t as any).entity_id || t.entityId || '');
       const tSupplierId = String((t as any).supplierId || t.supplierId || '');
       const tRelatedId = String((t as any).related_id || t.relatedId || '');
@@ -350,73 +327,17 @@ export default function SupplierDetails() {
 
     try {
       const response = await axios.post('/api/transactions', newTxPayload);
-      const savedTxFromBackend = response.data; 
-
-      const normalizedTx = {
-        ...savedTxFromBackend,
-        id: String(savedTxFromBackend.id),
-        supplierId: String(savedTxFromBackend.entity_id),
-        entityId: String(savedTxFromBackend.entity_id),
-        relatedId: savedTxFromBackend.related_id ? String(savedTxFromBackend.related_id) : null,
-        blNumber: savedTxFromBackend.bl_number,
-        weightInTons: savedTxFromBackend.weight_in_tons,
-        pricePerTon: savedTxFromBackend.price_per_ton,
-        otherCost: savedTxFromBackend.other_cost
-      };
-
-      setTransactions(prev => [...prev, normalizedTx]);
-      setIsAddRecordOpen(false);
-      toast.success("Payment record added successfully");
-
-      setNewRecordAmount('');
-      setNewRecordDesc('');
-      setNewRecordJobId('');
+      if (response.status === 201 || response.status === 200) {
+        setIsAddRecordOpen(false);
+        toast.success("Payment record added successfully");
+        setNewRecordAmount('');
+        setNewRecordDesc('');
+        setNewRecordJobId('');
+        await fetchTxs();
+      }
     } catch (error) {
       toast.error("Failed to save record to backend");
     }
-  };
-
-  const printRow = (tx: Transaction) => {
-    const jobName = tx.relatedId && tx.relatedId !== 'none' ? jobs.find(j => String(j.id) === String(tx.relatedId))?.title || 'General' : 'General';
-    const cost = tx.type === 'raw_material' ? (tx.amount + (tx.otherCost || 0)) : 0;
-    const payment = tx.type === 'outgoing' ? tx.amount : 0;
-    
-    const printWindow = window.open('', '_blank');
-    if (!printWindow) return;
-    
-    printWindow.document.write(`
-      <html>
-        <head>
-          <title>Supplier Receipt</title>
-          <style>
-            body { font-family: sans-serif; padding: 40px; color: #333; }
-            .receipt { border: 1px solid #ddd; padding: 30px; max-width: 600px; margin: 0 auto; border-radius: 8px; }
-            .header { text-align: center; border-bottom: 2px solid #eee; padding-bottom: 15px; margin-bottom: 25px; }
-            .row { display: flex; justify-content: space-between; margin-bottom: 12px; }
-            .total-row { display: flex; justify-content: space-between; margin-top: 20px; padding-top: 15px; border-top: 2px solid #333; font-weight: bold; }
-          </style>
-        </head>
-        <body onload="window.print(); window.close();">
-          <div class="receipt">
-            <div class="header">
-              <h2>Supplier Ledger</h2>
-              <p>${supplier.name} | ${supplier.country}</p>
-              <p>Date: ${formatDate(tx.date)}</p>
-            </div>
-            <div class="row"><strong>Job / Operation:</strong> <span>${jobName}</span></div>
-            <div class="row"><strong>Product / Desc:</strong> <span>${tx.description || '-'}</span></div>
-            <div class="row"><strong>Container:</strong> <span>${tx.blNumber || '-'}</span></div>
-            <div class="row"><strong>Weight (Tons):</strong> <span>${tx.weightInTons || '-'}</span></div>
-            <div class="row"><strong>Price per Ton:</strong> <span>${tx.pricePerTon || '-'}</span></div>
-            <div class="total-row">
-              <span>${tx.type === 'outgoing' ? 'Payment Given' : 'Total Cost'}:</span> 
-              <span>${tx.currency} ${tx.type === 'outgoing' ? payment : cost}</span>
-            </div>
-          </div>
-        </body>
-      </html>
-    `);
-    printWindow.document.close();
   };
 
   const totalBalanceObj: Record<string, number> = {};
@@ -580,7 +501,7 @@ export default function SupplierDetails() {
                       ) : tx.type === 'raw_material' ? (
                         <EditableCell type="number" value={tx.amount} onSave={(v) => handleTxUpdate(tx.id, 'amount', v)} className="w-20 text-xs font-medium bg-transparent text-right" />
                       ) : (
-                        <Button variant="ghost" size="sm" className="h-8 text-xs text-muted-foreground hover:text-red-600" onClick={() => handleTxUpdate(tx.id, 'type', 'raw_material')}>Set Cost</Button>
+                        <span className="text-muted-foreground">-</span>
                       )}
                     </td>
                     <td className="px-4 py-2 text-right">
@@ -595,7 +516,7 @@ export default function SupplierDetails() {
                     <td className="px-4 py-2 text-right font-bold text-destructive">
                       {tx.type === 'raw_material' ? formatCurrency(tx.amount + (tx.otherCost || 0), tx.currency) : '-'}
                     </td>
-                    <td className="px-4 py-2 text-right flex justify-end">
+                    <td className="px-4 py-2 text-right">
                       {tx.type === 'outgoing' ? (
                         <EditableCell type="number" value={tx.amount} onSave={(v) => handleTxUpdate(tx.id, 'amount', v)} className="w-28 text-base font-bold bg-transparent text-right text-green-600" />
                       ) : (
@@ -603,9 +524,6 @@ export default function SupplierDetails() {
                       )}
                     </td>
                     <td className="px-4 py-2 text-center flex items-center justify-center gap-1 no-print">
-                      <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-primary" onClick={() => printRow(tx)}>
-                        <Printer className="h-4 w-4" />
-                      </Button>
                       {!tx.isAuto && (
                         <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" onClick={() => handleDeleteTx(tx.id)}>
                           <Trash2 className="h-4 w-4" />
@@ -620,19 +538,19 @@ export default function SupplierDetails() {
               <tfoot className="bg-muted font-bold text-sm">
                 <tr>
                   <td colSpan={9} className="px-4 py-4 text-right uppercase">Total Cost Supplier:</td>
-                  <td colSpan={3} className="px-4 py-4 text-center text-lg text-primary whitespace-nowrap border-l">
+                  <td colSpan={3} className="px-4 py-4 text-center text-lg text-primary border-l">
                     {formatBalanceObj(totalCostObj)}
                   </td>
                 </tr>
                 <tr className="border-t">
                   <td colSpan={9} className="px-4 py-4 text-right uppercase">Total Payment Given:</td>
-                  <td colSpan={3} className="px-4 py-4 text-center text-lg text-success whitespace-nowrap border-l">
+                  <td colSpan={3} className="px-4 py-4 text-center text-lg text-success border-l">
                     {formatBalanceObj(totalPaymentsObj)}
                   </td>
                 </tr>
                 <tr className="border-t">
                   <td colSpan={9} className="px-4 py-4 text-right uppercase">Total Balance Owed to Supplier:</td>
-                  <td colSpan={3} className="px-4 py-4 text-center text-lg text-destructive whitespace-nowrap border-l">
+                  <td colSpan={3} className="px-4 py-4 text-center text-lg text-destructive border-l">
                     {formatBalanceObj(totalBalanceObj)}
                   </td>
                 </tr>
