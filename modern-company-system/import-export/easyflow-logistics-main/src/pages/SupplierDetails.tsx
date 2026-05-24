@@ -31,7 +31,6 @@ function EditableCell({ value, type = 'text', onSave, className = '', placeholde
   useEffect(() => { propValRef.current = value; }, [value]);
 
   useEffect(() => {
-    // Only overwrite 'val' if it's not actively being edited, to prevent decimal vanishing.
     if (String(value) !== String(valRef.current)) {
       setVal(value !== undefined && value !== null ? value : '');
     }
@@ -121,156 +120,186 @@ export default function SupplierDetails() {
   const [newRecordCurrency, setNewRecordCurrency] = useState('USD');
   const [newRecordDate, setNewRecordDate] = useState(new Date().toISOString().split('T')[0]);
 
-const handleAddExcelRow = async () => {
-  const numericSupplierId = id ? parseInt(id, 10) : null;
+  const handleAddExcelRow = async () => {
+    const numericSupplierId = id ? parseInt(id, 10) : null;
 
-  if (!numericSupplierId || isNaN(numericSupplierId)) {
-    toast.error("Invalid Supplier ID");
-    return;
-  }
+    if (!numericSupplierId || isNaN(numericSupplierId)) {
+      toast.error("Invalid Supplier ID");
+      return;
+    }
 
-  const newTxPayload = {
-    supplierId: numericSupplierId,
-    type: 'raw_material', 
-    amount: 0,
-    currency: filterCurrency !== 'all' ? filterCurrency : 'USD', 
-    date: new Date().toISOString(), 
-    description: 'New Raw Material Entry', 
-    blNumber: '-', 
-    weightInTons: 0,
-    pricePerTon: 0,
-    otherCost: 0,
-    jobId: filterJobId !== 'all' ? parseInt(filterJobId, 10) : null 
-  };
+    // 🔹 تعديل هنا: تم تحويل الحقول لتوافق الـ snake_case الخاص بقاعدة البيانات
+    const newTxPayload = {
+      entity_id: numericSupplierId,
+      type: 'raw_material', 
+      amount: 0,
+      currency: filterCurrency !== 'all' ? filterCurrency : 'USD', 
+      date: new Date().toISOString(), 
+      description: 'New Raw Material Entry', 
+      bl_number: '-', 
+      weight_in_tons: 0,
+      price_per_ton: 0,
+      other_cost: 0,
+      related_id: filterJobId !== 'all' ? filterJobId : null 
+    };
 
-  try {
-    // 1. إرسال البيانات للباك آند
-    const response = await axios.post('/api/transactions', newTxPayload);
-    const savedTxFromBackend = response.data; // هنا الباك آند سيرجع الكائن مع الـ id الجديد
+    try {
+      const response = await axios.post('/api/transactions', newTxPayload);
+      const savedTxFromBackend = response.data; 
 
-    // 2. تحديث الـ State بالعنصر الحقيقي القادم من السيرفر
-    setTransactions(prev => [...prev, savedTxFromBackend]);
-    toast.success("Row added successfully");
-  } catch (error) {
-    toast.error("Failed to save to backend");
-  }
-};
-
-const handleTxUpdate = async (txId: string | number, field: keyof Transaction, value: any) => {
-  const numericSupplierId = id ? parseInt(id, 10) : null;
-  
-  const previousTransactions = [...transactions];
-
-  let targetTx: any = null;
-  const updated = transactions.map(t => {
-    // استخدم == بدلاً من === إذا كنت غير متأكد من تطابق النوع (string مقابل number) أو حوله لرقم
-    if (String(t.id) === String(txId)) {
-      const newT = { 
-        ...t, 
-        [field]: value,
-        supplierId: (t as any).supplierId || numericSupplierId,
-        jobId: (t as any).jobId || (t.relatedId && t.relatedId !== id ? parseInt(t.relatedId, 10) : null)
+      // رسم الحقل محلياً ليتوافق مع بقية الفلتر والكود القديم
+      const normalizedTx = {
+        ...savedTxFromBackend,
+        id: savedTxFromBackend.id,
+        supplierId: savedTxFromBackend.entity_id,
+        relatedId: savedTxFromBackend.related_id,
+        blNumber: savedTxFromBackend.bl_number,
+        weightInTons: savedTxFromBackend.weight_in_tons,
+        pricePerTon: savedTxFromBackend.price_per_ton,
+        otherCost: savedTxFromBackend.other_cost
       };
 
-      if (field === 'weightInTons' ||  field === 'pricePerTon') {
-        newT.amount = (Number(newT.weightInTons) || 0) * (Number(newT.pricePerTon) || 0);
-      }
-      targetTx = newT;
-      return newT;
+      setTransactions(prev => [...prev, normalizedTx]);
+      toast.success("Row added successfully");
+    } catch (error) {
+      toast.error("Failed to save to backend");
     }
-    return t;
-  });
-  setTransactions(updated);
+  };
 
-  try {
-    const response = await axios.put(`/api/transactions/${txId}`, {
-      [field]: value,
-      amount: targetTx.amount 
+  const handleTxUpdate = async (txId: string | number, field: keyof Transaction, value: any) => {
+    const numericSupplierId = id ? parseInt(id, 10) : null;
+    const previousTransactions = [...transactions];
+
+    let targetTx: any = null;
+    const updated = transactions.map(t => {
+      if (String(t.id) === String(txId)) {
+        const newT = { 
+          ...t, 
+          [field]: value,
+          supplierId: (t as any).supplierId || numericSupplierId,
+          jobId: (t as any).jobId || (t.relatedId && t.relatedId !== id ? parseInt(t.relatedId, 10) : null)
+        };
+
+        if (field === 'weightInTons' || field === 'pricePerTon') {
+          newT.amount = (Number(newT.weightInTons) || 0) * (Number(newT.pricePerTon) || 0);
+        }
+        targetTx = newT;
+        return newT;
+      }
+      return t;
     });
-    
-    setTransactions(prev => prev.map(t => String(t.id) === String(txId) ? response.data : t));
+    setTransactions(updated);
 
-  } catch (error) {
-    toast.error("Failed to update on server");
-    setTransactions(previousTransactions);
-  }
-}; 
+    // 🔹 تعديل هنا: خريطة تحويل المسميات عند التحديث للسيرفر
+    const dbFieldsMap: Record<string, string> = {
+      date: 'date',
+      description: 'description',
+      currency: 'currency',
+      amount: 'amount',
+      type: 'type',
+      relatedId: 'related_id',
+      blNumber: 'bl_number',
+      weightInTons: 'weight_in_tons',
+      pricePerTon: 'price_per_ton',
+      otherCost: 'other_cost'
+    };
 
-const handleDeleteTx = async (txId: string | number) => {
-  const previousTransactions = [...transactions];
-  const updated = transactions.filter(t => String(t.id) !== String(txId));
-  
-  setTransactions(updated);
+    const dbField = dbFieldsMap[field as string] || (field as string);
 
-  try {
-    await axios.delete(`/api/transactions/${txId}`);
-    toast.success("Row deleted successfully");
-  } catch (error) {
-    toast.error("Failed to delete from server");
-    setTransactions(previousTransactions);
-  }
-};
+    try {
+      await axios.put(`/api/transactions/${txId}`, {
+        [dbField]: value,
+        amount: targetTx.amount 
+      });
+    } catch (error) {
+      toast.error("Failed to update on server");
+      setTransactions(previousTransactions);
+    }
+  }; 
+
+  const handleDeleteTx = async (txId: string | number) => {
+    const previousTransactions = [...transactions];
+    const updated = transactions.filter(t => String(t.id) !== String(txId));
+    setTransactions(updated);
+
+    try {
+      await axios.delete(`/api/transactions/${txId}`);
+      toast.success("Row deleted successfully");
+    } catch (error) {
+      toast.error("Failed to delete from server");
+      setTransactions(previousTransactions);
+    }
+  };
 
   const supplier = suppliers.find(s => s.id === id);
 
-const supplierTransactions = useMemo(() => {
-  const numericSupplierId = id ? parseInt(id, 10) : null;
-  const supplierJobIds = jobs.filter(j => j.supplierId === id).map(j => j.id);
-  
-  const manualTxs = transactions.filter(t => {
-    if (t.type === 'discount') return false;
+  const supplierTransactions = useMemo(() => {
+    const numericSupplierId = id ? parseInt(id, 10) : null;
+    const supplierJobIds = jobs.filter(j => j.supplierId === id).map(j => j.id);
     
-    // التحقق الأساسي: هل السطر ينتمي لهذا المورد؟ (سواء بالنظام الجديد أو القديم)
-    const isBelongsToSupplier = 
-      t.supplierId === numericSupplierId || 
-      t.entityId === id || 
-      t.relatedId === id;
+    const manualTxs = transactions.filter(t => {
+      if (t.type === 'discount') return false;
+      
+      // التوافق مع الحقول القادمة من السيرفر كـ snake_case أو كود الفرونت الحالي
+      const tEntityId = (t as any).entity_id || t.entityId;
+      const tSupplierId = (t as any).supplierId || t.supplierId;
+      const tRelatedId = (t as any).related_id || t.relatedId;
 
-    if (isBelongsToSupplier) return true;
+      const isBelongsToSupplier = 
+        tSupplierId === numericSupplierId || 
+        tEntityId === id || 
+        tRelatedId === id;
 
-    // التحقق من العمليات المرتبطة بـ Jobs التابعة لهذا المورد
-    if (t.relatedId && supplierJobIds.includes(t.relatedId)) {
-      return t.type === 'raw_material';
+      if (isBelongsToSupplier) return true;
+
+      if (tRelatedId && supplierJobIds.includes(tRelatedId)) {
+        return t.type === 'raw_material';
+      }
+      return false;
+    }).map(t => ({
+      ...t,
+      relatedId: (t as any).related_id || t.relatedId,
+      blNumber: (t as any).bl_number || t.blNumber,
+      weightInTons: (t as any).weight_in_tons !== undefined ? (t as any).weight_in_tons : t.weightInTons,
+      pricePerTon: (t as any).price_per_ton !== undefined ? (t as any).price_per_ton : t.pricePerTon,
+      otherCost: (t as any).other_cost !== undefined ? (t as any).other_cost : t.otherCost
+    }));
+
+    const autoTxs: any[] = [];
+    const supplierJobsList = jobs.filter(j => j.supplierId === id);
+    
+    supplierJobsList.forEach(job => {
+      const grossCost = job.rawMaterialCost || ((Number(job.rawMaterialWeight) || 0) * (Number(job.rawMaterialPricePerTon) || 0));
+      const suppDisc = job.supplierDiscountPercentage || 0;
+      const cost = grossCost - (grossCost * (suppDisc / 100));
+      autoTxs.push({
+        id: `auto-job-${job.id}`,
+        relatedId: job.id,
+        type: 'raw_material',
+        amount: cost,
+        otherCost: Number(job.pettyCash) || 0,
+        currency: job.currency,
+        date: job.createdAt,
+        description: `Auto Job Cost: ${job.title}`,
+        weightInTons: job.rawMaterialWeight || 0,
+        pricePerTon: job.rawMaterialPricePerTon || 0,
+        blNumber: job.blNumber || '',
+        isAuto: true
+      });
+    });
+
+    let allTxs = [...manualTxs, ...autoTxs];
+    
+    if (filterJobId !== 'all') {
+      allTxs = allTxs.filter(t => t.relatedId === filterJobId);
     }
     
-    return false;
-  });
-
-  const autoTxs: any[] = [];
-  const supplierJobsList = jobs.filter(j => j.supplierId === id);
-  
-  supplierJobsList.forEach(job => {
-    const grossCost = job.rawMaterialCost || ((Number(job.rawMaterialWeight) || 0) * (Number(job.rawMaterialPricePerTon) || 0));
-    const suppDisc = job.supplierDiscountPercentage || 0;
-    const cost = grossCost - (grossCost * (suppDisc / 100));
-    autoTxs.push({
-      id: `auto-job-${job.id}`,
-      relatedId: job.id,
-      type: 'raw_material',
-      amount: cost,
-      otherCost: Number(job.pettyCash) || 0,
-      currency: job.currency,
-      date: job.createdAt,
-      description: `Auto Job Cost: ${job.title}`,
-      weightInTons: job.rawMaterialWeight || 0,
-      pricePerTon: job.rawMaterialPricePerTon || 0,
-      blNumber: job.blNumber || '',
-      isAuto: true
-    });
-  });
-
-  let allTxs = [...manualTxs, ...autoTxs];
-  
-  if (filterJobId !== 'all') {
-    allTxs = allTxs.filter(t => t.relatedId === filterJobId);
-  }
-  
-  if (filterCurrency !== 'all') {
-    allTxs = allTxs.filter(t => (t.currency || 'USD') === filterCurrency);
-  }
-  
-  return allTxs.sort((a,b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-}, [transactions, jobs, id, filterJobId, filterCurrency]);
+    if (filterCurrency !== 'all') {
+      allTxs = allTxs.filter(t => (t.currency || 'USD') === filterCurrency);
+    }
+    
+    return allTxs.sort((a,b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+  }, [transactions, jobs, id, filterJobId, filterCurrency]);
 
   const supplierJobs = useMemo(() => {
     return jobs.filter(j => j.supplierId === id).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
@@ -309,54 +338,61 @@ const supplierTransactions = useMemo(() => {
     );
   }
 
- const handleAddRecord = async () => {
-  const numericSupplierId = id ? parseInt(id, 10) : null;
-  const numericJobId = newRecordJobId && newRecordJobId !== 'none' ? parseInt(newRecordJobId, 10) : null;
+  const handleAddRecord = async () => {
+    const numericSupplierId = id ? parseInt(id, 10) : null;
 
-  if (!numericSupplierId || isNaN(numericSupplierId)) {
-    toast.error("Invalid Supplier ID");
-    return;
-  }
+    if (!numericSupplierId || isNaN(numericSupplierId)) {
+      toast.error("Invalid Supplier ID");
+      return;
+    }
 
-  if (!newRecordAmount || isNaN(Number(newRecordAmount))) {
-    toast.error("Please enter a valid amount");
-    return;
-  }
+    if (!newRecordAmount || isNaN(Number(newRecordAmount))) {
+      toast.error("Please enter a valid amount");
+      return;
+    }
 
-  // 1. تجهيز البيانات المرسلة للباك آند (متوافقة مع PostgreSQL)
-  const newTxPayload = {
-    supplierId: numericSupplierId,
-    jobId: numericJobId, // سيكون رقم أو null إذا كانت عملية عامة بدون مشروع
-    type: 'outgoing', // نوع العملية دفع للمورد
-    amount: Number(newRecordAmount),
-    currency: newRecordCurrency,
-    date: new Date(newRecordDate).toISOString(), 
-    description: newRecordDesc || 'Payment Given',
-    blNumber: '-',
-    weightInTons: 0,
-    pricePerTon: 0,
-    otherCost: 0
+    // 🔹 تعديل هنا: توافق الـ Payload مع صيغة الـ Database حقل بحقل
+    const newTxPayload = {
+      entity_id: numericSupplierId,
+      related_id: newRecordJobId && newRecordJobId !== 'none' ? newRecordJobId : null, 
+      type: 'outgoing', 
+      amount: Number(newRecordAmount),
+      currency: newRecordCurrency,
+      date: new Date(newRecordDate).toISOString(), 
+      description: newRecordDesc || 'Payment Given',
+      bl_number: '-',
+      weight_in_tons: 0,
+      price_per_ton: 0,
+      other_cost: 0
+    };
+
+    try {
+      const response = await axios.post('/api/transactions', newTxPayload);
+      const savedTxFromBackend = response.data; 
+
+      const normalizedTx = {
+        ...savedTxFromBackend,
+        id: savedTxFromBackend.id,
+        supplierId: savedTxFromBackend.entity_id,
+        relatedId: savedTxFromBackend.related_id,
+        blNumber: savedTxFromBackend.bl_number,
+        weightInTons: savedTxFromBackend.weight_in_tons,
+        pricePerTon: savedTxFromBackend.price_per_ton,
+        otherCost: savedTxFromBackend.other_cost
+      };
+
+      setTransactions(prev => [...prev, normalizedTx]);
+      setIsAddRecordOpen(false);
+      toast.success("Payment record added successfully");
+
+      setNewRecordAmount('');
+      setNewRecordDesc('');
+      setNewRecordJobId('');
+    } catch (error) {
+      console.error("Error saving record to PostgreSQL:", error);
+      toast.error("Failed to save record to backend");
+    }
   };
-
-  try {
-    // 2. إرسال البيانات للباك آند
-    const response = await axios.post('/api/transactions', newTxPayload);
-    const savedTxFromBackend = response.data; // استلام الكائن بالـ ID الرقمي الجديد من السيرفر
-
-    // 3. تحديث الـ State بالبيانات الحقيقية وإغلاق النافذة
-    setTransactions(prev => [...prev, savedTxFromBackend]);
-    setIsAddRecordOpen(false);
-    toast.success("Payment record added successfully");
-
-    // 4. إعادة تهيئة الحقول للاستخدام القادم
-    setNewRecordAmount('');
-    setNewRecordDesc('');
-    setNewRecordJobId('');
-  } catch (error) {
-    console.error("Error saving record to PostgreSQL:", error);
-    toast.error("Failed to save record to backend");
-  }
-};
 
   const printRow = (tx: Transaction) => {
     const jobName = tx.relatedId && tx.relatedId !== 'none' && tx.relatedId !== id ? jobs.find(j => j.id === tx.relatedId)?.title || 'General' : 'General';
@@ -408,12 +444,10 @@ const supplierTransactions = useMemo(() => {
     printWindow.document.close();
   };
 
-  // Calculate totals for the footer
   const totalBalanceObj: Record<string, number> = {};
   const totalPaymentsObj: Record<string, number> = {};
   const totalCostObj: Record<string, number> = {};
   supplierTransactions.forEach(t => {
-    // For supplier: outgoing (payment) decreases debt, raw_material (cost) increases debt
     const amt = t.type === 'outgoing' ? -t.amount : t.type === 'raw_material' ? (t.amount + (t.otherCost || 0)) : 0;
     totalBalanceObj[t.currency || 'USD'] = (totalBalanceObj[t.currency || 'USD'] || 0) + amt;
     if (t.type === 'outgoing') {
@@ -438,6 +472,11 @@ const supplierTransactions = useMemo(() => {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          {/* تم إضافة زر سريع لفتح الـ Modal الخاص بالـ Add Record لسهولة إضافة سندات الدفع المباشرة */}
+          <Button onClick={() => setIsAddRecordOpen(true)} className="bg-green-600 hover:bg-green-700 text-white gap-2">
+            <Plus className="h-4 w-4" />
+            Add Payment Record
+          </Button>
           <Button onClick={() => window.print()} variant="outline" className="shrink-0 gap-2">
             <Printer className="h-4 w-4" />
             Print Summary
@@ -509,13 +548,13 @@ const supplierTransactions = useMemo(() => {
                 supplierTransactions.map((tx) => (
                   <tr key={tx.id} className="hover:bg-muted/30 transition-colors group">
                     <td className="px-4 py-2">
-                      {(tx as any).isAuto ? <span className="text-xs text-muted-foreground">{formatDate(tx.date)}</span> : <DatePicker value={tx.date.split('T')[0]} onChange={(v) => handleTxUpdate(tx.id, 'date', v)} className="w-28 h-8 text-xs bg-transparent border-transparent hover:border-input focus:border-input p-1" />}
+                      {tx.isAuto ? <span className="text-xs text-muted-foreground">{formatDate(tx.date)}</span> : <DatePicker value={tx.date ? tx.date.split('T')[0] : ''} onChange={(v) => handleTxUpdate(tx.id, 'date', v)} className="w-28 h-8 text-xs bg-transparent border-transparent hover:border-input focus:border-input p-1" />}
                     </td>
                     <td className="px-4 py-2">
-                      {(tx as any).isAuto ? (
+                      {tx.isAuto ? (
                         <span className="text-xs text-muted-foreground whitespace-nowrap overflow-hidden text-ellipsis block w-40">{jobs.find(j => j.id === tx.relatedId)?.title || 'Job'}</span>
                       ) : (
-                        <Select value={tx.relatedId === id ? 'none' : tx.relatedId} onValueChange={(v) => handleTxUpdate(tx.id, 'relatedId', v)}>
+                        <Select value={tx.relatedId || 'none'} onValueChange={(v) => handleTxUpdate(tx.id, 'relatedId', v === 'none' ? null : v)}>
                           <SelectTrigger className="h-8 text-xs border-transparent hover:border-input bg-transparent"><SelectValue placeholder="Select Job" /></SelectTrigger>
                           <SelectContent>
                             <SelectItem value="none">General (No Job)</SelectItem>
@@ -525,14 +564,14 @@ const supplierTransactions = useMemo(() => {
                       )}
                     </td>
                     <td className="px-4 py-2">
-                      {(tx as any).isAuto ? <span className="text-xs text-primary font-medium">{tx.description}</span> : <EditableCell type="text" value={tx.description} onSave={(v) => handleTxUpdate(tx.id, 'description', v)} placeholder="Product..." className="w-full text-xs bg-transparent" />}
+                      {tx.isAuto ? <span className="text-xs text-primary font-medium">{tx.description}</span> : <EditableCell type="text" value={tx.description} onSave={(v) => handleTxUpdate(tx.id, 'description', v)} placeholder="Product..." className="w-full text-xs bg-transparent" />}
                     </td>
                     <td className="px-4 py-2">
                       {(() => {
                         const linkedJob = jobs.find(j => j.id === tx.relatedId);
                         const qtyText = linkedJob?.numberOfContainers ? `(${linkedJob.numberOfContainers} FCL)` : '';
                         const blVal = tx.blNumber || linkedJob?.blNumber || '-';
-                        if ((tx as any).isAuto) {
+                        if (tx.isAuto) {
                           return <span className="text-xs text-muted-foreground">{blVal} {qtyText}</span>;
                         }
                         return (
@@ -544,7 +583,7 @@ const supplierTransactions = useMemo(() => {
                       })()}
                     </td>
                     <td className="px-4 py-2">
-                      {(tx as any).isAuto ? (
+                      {tx.isAuto ? (
                         <span className="text-xs font-medium text-muted-foreground">{tx.currency}</span>
                       ) : (
                         <Select value={tx.currency} onValueChange={(v) => handleTxUpdate(tx.id, 'currency', v)}>
@@ -558,13 +597,13 @@ const supplierTransactions = useMemo(() => {
                       )}
                     </td>
                     <td className="px-4 py-2 text-right">
-                      {(tx as any).isAuto ? <span className="text-xs text-muted-foreground">{tx.weightInTons || 0}</span> : <EditableCell type="number" value={tx.weightInTons || 0} onSave={(v) => handleTxUpdate(tx.id, 'weightInTons', v)} className="w-20 text-xs bg-transparent text-right" />}
+                      {tx.isAuto ? <span className="text-xs text-muted-foreground">{tx.weightInTons || 0}</span> : <EditableCell type="number" value={tx.weightInTons || 0} onSave={(v) => handleTxUpdate(tx.id, 'weightInTons', v)} className="w-20 text-xs bg-transparent text-right" />}
                     </td>
                     <td className="px-4 py-2 text-right">
-                      {(tx as any).isAuto ? <span className="text-xs text-muted-foreground">{tx.pricePerTon || 0}</span> : <EditableCell type="number" value={tx.pricePerTon || 0} onSave={(v) => handleTxUpdate(tx.id, 'pricePerTon', v)} className="w-20 text-xs bg-transparent text-right" />}
+                      {tx.isAuto ? <span className="text-xs text-muted-foreground">{tx.pricePerTon || 0}</span> : <EditableCell type="number" value={tx.pricePerTon || 0} onSave={(v) => handleTxUpdate(tx.id, 'pricePerTon', v)} className="w-20 text-xs bg-transparent text-right" />}
                     </td>
                     <td className="px-4 py-2 text-right">
-                      {(tx as any).isAuto ? (
+                      {tx.isAuto ? (
                         <span className="text-xs font-medium text-foreground">{tx.amount}</span>
                       ) : tx.type === 'raw_material' ? (
                         <EditableCell type="number" value={tx.amount} onSave={(v) => handleTxUpdate(tx.id, 'amount', v)} className="w-20 text-xs font-medium bg-transparent text-right" />
@@ -573,7 +612,7 @@ const supplierTransactions = useMemo(() => {
                       )}
                     </td>
                     <td className="px-4 py-2 text-right">
-                      {(tx as any).isAuto ? (
+                      {tx.isAuto ? (
                         <span className="text-xs text-muted-foreground">{tx.otherCost || 0}</span>
                       ) : tx.type === 'raw_material' ? (
                         <EditableCell type="number" value={tx.otherCost || 0} onSave={(v) => handleTxUpdate(tx.id, 'otherCost', v)} className="w-20 text-xs bg-transparent text-right" />
@@ -595,7 +634,7 @@ const supplierTransactions = useMemo(() => {
                       <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-primary" onClick={() => printRow(tx)}>
                         <Printer className="h-4 w-4" />
                       </Button>
-                      {!(tx as any).isAuto && (
+                      {!tx.isAuto && (
                         <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" onClick={() => handleDeleteTx(tx.id)}>
                           <Trash2 className="h-4 w-4" />
                         </Button>
@@ -630,6 +669,60 @@ const supplierTransactions = useMemo(() => {
           </table>
         </div>
       </div>
+
+      {/* الـ Dialog (النافذة المنبثقة) الخاصة بإضافة السندات */}
+      <Dialog open={isAddRecordOpen} onOpenChange={setIsAddRecordOpen}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle>Add Payment Record</DialogTitle>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid grid-cols-4 items-center gap-4">
+              <Label htmlFor="amount" className="text-right">Amount</Label>
+              <Input id="amount" type="number" value={newRecordAmount} onChange={(e) => setNewRecordAmount(e.target.value)} className="col-span-3" placeholder="0.00" />
+            </div>
+            <div className="grid grid-cols-4 items-center gap-4">
+              <Label htmlFor="currency" className="text-right">Currency</Label>
+              <Select value={newRecordCurrency} onValueChange={setNewRecordCurrency}>
+                <SelectTrigger className="col-span-3">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="USD">USD</SelectItem>
+                  <SelectItem value="EUR">EUR</SelectItem>
+                  <SelectItem value="EGP">EGP</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid grid-cols-4 items-center gap-4">
+              <Label htmlFor="job" className="text-right">Link to Job</Label>
+              <Select value={newRecordJobId || 'none'} onValueChange={setNewRecordJobId}>
+                <SelectTrigger className="col-span-3">
+                  <SelectValue placeholder="Select Job" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">General (No Job)</SelectItem>
+                  {supplierJobs.map(j => <SelectItem key={j.id} value={j.id}>{j.title}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid grid-cols-4 items-center gap-4">
+              <Label htmlFor="date" className="text-right">Date</Label>
+              <div className="col-span-3">
+                <DatePicker value={newRecordDate} onChange={(v) => setNewRecordDate(v || '')} />
+              </div>
+            </div>
+            <div className="grid grid-cols-4 items-center gap-4">
+              <Label htmlFor="desc" className="text-right">Description</Label>
+              <Input id="desc" value={newRecordDesc} onChange={(e) => setNewRecordDesc(e.target.value)} className="col-span-3" placeholder="e.g. Cash payment, Bank transfer" />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsAddRecordOpen(false)}>Cancel</Button>
+            <Button onClick={handleAddRecord} className="bg-green-600 hover:bg-green-700 text-white">Save Record</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

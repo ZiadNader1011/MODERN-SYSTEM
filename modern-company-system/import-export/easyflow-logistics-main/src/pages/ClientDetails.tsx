@@ -85,10 +85,11 @@ export default function ClientDetails() {
       try {
         setLoading(true);
         
+        // 🔹 تعديل هنا: تم تغيير اسم جدول الحركات إلى 'transactions' كما هو بالـ Database
         const [clientRes, jobsRes, txsRes, productsRes] = await Promise.all([
           supabase.from('Client').select('*').eq('id', id).maybeSingle(),
           supabase.from('Job').select('*').eq('clientId', id), 
-          supabase.from('Transaction').select('*').eq('entity_id', id), 
+          supabase.from('transactions').select('*').eq('entity_id', id), 
           supabase.from('Product').select('id, name')
         ]);
 
@@ -130,8 +131,9 @@ export default function ClientDetails() {
       incoterm: ''
     };
 
+    // 🔹 تعديل هنا: 'transactions'
     const { data, error } = await supabase
-      .from('Transaction')
+      .from('transactions')
       .insert([newTx])
       .select()
       .maybeSingle();
@@ -169,8 +171,9 @@ export default function ClientDetails() {
       updatePayload.amount = w * p;
     }
 
+    // 🔹 تعديل هنا: 'transactions'
     const { error } = await supabase
-      .from('Transaction')
+      .from('transactions')
       .update(updatePayload)
       .eq('id', txId);
 
@@ -182,8 +185,9 @@ export default function ClientDetails() {
   };
 
   const handleDeleteTx = async (txId: string) => {
+    // 🔹 تعديل هنا: 'transactions'
     const { error } = await supabase
-      .from('Transaction')
+      .from('transactions')
       .delete()
       .eq('id', txId);
 
@@ -200,7 +204,6 @@ export default function ClientDetails() {
   }, [jobs]);
 
   const clientTransactions = useMemo(() => {
-    // 🔥 تعديل جوهري: الـ Mapping اليدوي الآن يحافظ على الأسماء موحدة بصيغة camelCase للـ UI لضمان عدم حدوث تضارب
     let manualTxs = transactions.map(t => ({
       id: t.id,
       entityId: t.entity_id,
